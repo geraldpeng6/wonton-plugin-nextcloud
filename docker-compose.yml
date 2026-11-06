@@ -129,6 +129,7 @@ x-wonton:
     en: "Your self-hosted cloud: files, photos, calendar and office in one place"
   icon: icon.svg
   notices: [NOTICE]
+  screenshots: [screenshots/dashboard.png, screenshots/files.png, screenshots/photos.png]
   author: { name: geraldpeng6 }
   homepage: https://nextcloud.com
   # 应用（Nextcloud）的许可证；MariaDB（GPL-2.0）和 Valkey（BSD-3-Clause）作为独立容器运行，
