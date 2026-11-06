@@ -20,6 +20,7 @@ occ config:system:set overwriteprotocol --value="$proto"
 occ config:system:set trusted_domains 1 --value="$hostport"
 
 auth_host="$(printf '%s' "$WONTON_OIDC_ISSUER" | cut -d/ -f3)"
+auth_host="${auth_host%%:*}" # 开发环境的 issuer 带端口，解析主机名要去掉
 proxy_ip=""
 for _ in 1 2 3 4 5; do
 	proxy_ip="$(getent ahostsv4 "$auth_host" | awk '{print $1; exit}')"
