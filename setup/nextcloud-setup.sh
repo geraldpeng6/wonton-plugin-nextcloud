@@ -53,3 +53,8 @@ provider_id="$(occ user_oidc:provider wonton --output json | php -r 'echo json_d
 	echo "user_oidc 提供方 ID 是 $provider_id，不是 1；清单 webui.path 指向的 /apps/user_oidc/login/1 会 404" >&2
 	exit 1
 }
+# 登录时 user_oidc 会取发现文档；这里先自检一次，取不到就装不上并写明原因（失败即停，别等用户登录才失败）。
+curl -fsS --noproxy '*' "$WONTON_OIDC_ISSUER/.well-known/openid-configuration" >/dev/null || {
+	echo "取不到身份提供方发现文档：$WONTON_OIDC_ISSUER/.well-known/openid-configuration（容器内解析或访问失败）" >&2
+	exit 1
+}

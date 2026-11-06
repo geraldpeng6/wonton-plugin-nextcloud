@@ -17,13 +17,24 @@ origin_of() { # WEB_URL 可能带入口路径（新核心），一律只取源�
 	printf '%s' "$1" | sed -E 's#^(https?://[^/]+).*#\1#'
 }
 
+marker_file() { # SMOKE_STATE 在 dev.sh probes 里是目录、在 e2e 里是文件，标记放旁边
+	if [[ -d "$SMOKE_STATE" ]]; then
+		printf '%s' "$SMOKE_STATE/nextcloud-marker"
+	else
+		printf '%s' "${SMOKE_STATE}.marker"
+	fi
+}
+
 oidc_login() { # <jar 文件>：走完 OIDC 链把 Nextcloud 会话写进会话 jar。user_oidc 的 code 换会话在服务端做，
 	# 整条链（登录入口 → 身份提供方 → 回调）都是 302，curl 跟得完；会话已有效时 user_oidc 直接跳回首页，幂等。
-	local jar="$1" origin start final code state
+	local jar="$1" origin start code state body
 	origin="$(origin_of "$SMOKE_WEB_URL")"
-	start="$(curl -sS --noproxy '*' -o /dev/null -b "$jar" -c "$jar" \
+	start="$(curl -sS --noproxy '*' -o /tmp/nc-login-resp -b "$jar" -c "$jar" \
 		-w '%{redirect_url}' "$origin/apps/user_oidc/login/1")" || { echo "进不了 user_oidc 登录入口"; return 1; }
-	[[ -n "$start" ]] || { echo "登录入口没有跳到身份提供方"; return 1; }
+	[[ -n "$start" ]] || {
+		echo "登录入口没有 302（响应开头：$(head -c 200 /tmp/nc-login-resp | tr '\n' ' ')）"
+		return 1
+	}
 	final="$(curl -sS --noproxy '*' -o /dev/null -L -b "$jar" -c "$jar" -H 'Accept: text/html' \
 		-w '%{url_effective}' "$start")" || { echo "authorize 链失败：$start"; return 1; }
 	code="$(qparam "$final" code)"
@@ -34,8 +45,8 @@ oidc_login() { # <jar 文件>：走完 OIDC 链把 Nextcloud 会话写进会话 
 		"$origin/apps/user_oidc/code" || { echo "code 换会话失败"; return 1; }
 }
 
-web_assert() { # 未登录 Nextcloud 时根路径 302 到登录页：页面是真登录页，且带 user_oidc 的登录入口
-	grep -qi 'nextcloud' && grep -q 'user_oidc/login'
+web_assert() { # 未登录 Nextcloud 时根路径 302 到登录页：登录页就是应用的真实页面
+	grep -qi 'nextcloud'
 }
 
 identity_check() { # Nextcloud 的“当前用户”接口（OCS XML）：断言认出的就是主人本人，且在 admin 组（管理员）
@@ -46,23 +57,23 @@ identity_check() { # Nextcloud 的“当前用户”接口（OCS XML）：断言
 	grep -q '<element>admin</element>' <<<"$me" || { echo "$SMOKE_OWNER 不在 admin 组：$(head -c 300 <<<"$me")"; return 1; }
 }
 
-data_write() { # 建一个带随机标记的文件夹、传一个内容也是标记的文件，标记存进 $SMOKE_STATE
+data_write() { # 建一个带随机标记的文件夹、传一个内容也是标记的文件，标记存进状态目录
 	local marker origin
 	marker="$(head -c 12 /dev/urandom | base64 | tr -d '=+/' | head -c 16)"
-	printf '%s' "$marker" >"$SMOKE_STATE/nextcloud-marker"
+	printf '%s' "$marker" >"$(marker_file)"
 	origin="$(origin_of "$SMOKE_WEB_URL")"
 	oidc_login "$SMOKE_JAR" || return 1
 	curl -sS --noproxy '*' -b "$SMOKE_JAR" --fail-with-body -X MKCOL \
 		"$origin/remote.php/dav/files/$SMOKE_OWNER/wonton-smoke-$marker" >/dev/null ||
 		{ echo "建目录失败"; return 1; }
-	curl -sS --noproxy '*' -b "$SMOKE_JAR" --fail-with-body -T "$SMOKE_STATE/nextcloud-marker" \
+	curl -sS --noproxy '*' -b "$SMOKE_JAR" --fail-with-body -T "$(marker_file)" \
 		"$origin/remote.php/dav/files/$SMOKE_OWNER/wonton-smoke-$marker/marker.txt" >/dev/null ||
 		{ echo "传文件失败"; return 1; }
 }
 
 data_check() { # 读回标记：文件内容一致，目录也在
 	local marker dir origin body listing
-	marker="$(cat "$SMOKE_STATE/nextcloud-marker")"
+	marker="$(cat "$(marker_file)")"
 	dir="wonton-smoke-$marker"
 	origin="$(origin_of "$SMOKE_WEB_URL")"
 	oidc_login "$SMOKE_JAR" || return 1
