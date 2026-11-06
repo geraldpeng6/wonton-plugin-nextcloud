@@ -1,78 +1,188 @@
-# 示例插件：nginx 显示一个网页，向登录的人问好。改成自己的应用见 https://github.com/geraldpeng6/wonton-docs/blob/main/develop.md#写插件。
+# Nextcloud：自托管网盘，文件、相册、日历、办公一站都有。
+# 官方 apache 镜像，MariaDB 存元数据，Valkey 做缓存、文件锁和 PHP 会话；
+# 登录走云吞的身份提供方（官方 user_oidc 应用），打开就是自己的管理员账号。
 services:
-  web:
-    # 镜像按摘要固定（多架构镜像写清单列表的摘要），标签只给人看。
-    image: nginx:1.31.7-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
+  db:
+    image: mariadb:11.4.13@sha256:d1891ede5a559f1086f55053bb8cc1569b0298338c4d72d71725a7f74f6ba620
+    # Nextcloud 官方 compose 示例要求的隔离级别（READ-COMMITTED，binlog 下避免 key 冲突误报）。
+    command: --transaction-isolation=READ-COMMITTED
     environment:
-      # 网关代登录：SSI 回显的 Remote-User 只信核心带来的。官方镜像启动时对 templates 目录里的
-      # *.template 做 envsubst，把下面的地址换进 nginx 配置（见 web/default.conf.template）。
-      WONTON_CORE_ADDRESS: ${WONTON_CORE_ADDRESS}
-    # 包里的文件经 configs 交给容器（核心在启动前写进去），不能用卷挂载。
-    configs:
-      - source: site
-        target: /etc/nginx/templates/default.conf.template
-      - source: page
-        target: /usr/share/nginx/html/index.html
-      - source: tokens
-        target: /usr/share/nginx/html/tokens.css
+      TZ: ${TZ}
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${WONTON_SECRET_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${WONTON_SECRET_DB_ROOT_PASSWORD}
+      # 每次启动把数据目录升到镜像自带的 MariaDB 版本；跳过升级前的 mysqldump 备份（数据卷在插件数据目录里，随核心备份）。
+      MARIADB_AUTO_UPGRADE: "1"
+      MARIADB_DISABLE_UPGRADE_BACKUP: "1"
+    volumes:
+      - ${WONTON_APP_DATA}/db:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      # 镜像自带的官方检查：连得上且 InnoDB 完成初始化，不是只有进程活着。
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 30s
+      timeout: 5s
+      start_period: 2m
+      start_interval: 2s
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a
+    # 只做缓存、文件锁和 PHP 会话，不落盘（丢了自动重建，无状态）。
+    # 插件申请了出网、网络不是 internal，按规范给内部服务设密码。
+    command: ["valkey-server", "--requirepass", "${WONTON_SECRET_VALKEY_PASSWORD}", "--save", "", "--appendonly", "no"]
+    environment:
+      VALKEY_PASSWORD: ${WONTON_SECRET_VALKEY_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli --no-auth-warning -a \"$$VALKEY_PASSWORD\" ping | grep -q PONG"]
       interval: 30s
       timeout: 5s
       start_period: 30s
-      start_interval: 1s
+      start_interval: 2s
+    restart: unless-stopped
+
+  nextcloud:
+    image: nextcloud:33.0.10@sha256:1a18e5248b836a2f925ce553bd28d7dd69b0205632372f4c506356342182be8e
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ}
+      # 首次启动自动安装（官方镜像的安装流程）。管理员就是云吞用户（owner.identity 注入的用户名）：
+      # user_oidc 首次登录按 sub（= 云吞用户名）绑到这个账号，云吞用户即为管理员，没有第二个账号。
+      NEXTCLOUD_ADMIN_USER: ${WONTON_OWNER_NAME}
+      NEXTCLOUD_ADMIN_PASSWORD: ${WONTON_SECRET_ADMIN_PASSWORD}
+      MYSQL_HOST: db
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${WONTON_SECRET_DB_PASSWORD}
+      # 官方镜像按这组变量自动配 Redis 缓存、文件锁和 PHP 会话。
+      REDIS_HOST: valkey
+      REDIS_HOST_PASSWORD: ${WONTON_SECRET_VALKEY_PASSWORD}
+      PHP_UPLOAD_LIMIT: 10G
+    volumes:
+      - ${WONTON_APP_DATA}/html:/var/www/html
+    configs:
+      - source: health
+        target: /wonton/health.sh
+    healthcheck:
+      test: ["CMD", "sh", "/wonton/health.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10m
+      start_interval: 5s
+    restart: unless-stopped
+
+  cron:
+    # 后台任务（回收站清理、版本清理等）按官方推荐跑在共享同一数据卷的 sidecar，每 5 分钟一次
+    # （镜像内置的 www-data crontab）。同一镜像按 compose 子集要求各写一遍，不用锚点。
+    image: nextcloud:33.0.10@sha256:1a18e5248b836a2f925ce553bd28d7dd69b0205632372f4c506356342182be8e
+    entrypoint: /cron.sh
+    depends_on:
+      nextcloud:
+        condition: service_healthy
+    volumes:
+      - ${WONTON_APP_DATA}/html:/var/www/html
+    healthcheck:
+      # crond 就是这个服务的全部职责：进程在，每 5 分钟的 cron.php 就会跑；应用本身坏了由 nextcloud 的检查报。
+      test: ["CMD", "pgrep", "-f", "crond"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      start_interval: 2s
+    restart: unless-stopped
+
+  setup:
+    # 一次性收尾：反代设置、装 user_oidc、登记身份提供方。幂等，每次创建容器（安装、升级、重建）都重跑，
+    # 密钥变了（保留数据重装）也会更新。等 nextcloud 健康后再跑，occ 才可用。
+    image: nextcloud:33.0.10@sha256:1a18e5248b836a2f925ce553bd28d7dd69b0205632372f4c506356342182be8e
+    command: ["bash", "/wonton/setup.sh"]
+    depends_on:
+      nextcloud:
+        condition: service_healthy
+    environment:
+      WONTON_APP_URL: ${WONTON_APP_URL}
+      WONTON_OIDC_ISSUER: ${WONTON_OIDC_ISSUER}
+      WONTON_OIDC_CLIENT_ID: ${WONTON_OIDC_CLIENT_ID}
+      WONTON_OIDC_CLIENT_SECRET: ${WONTON_OIDC_CLIENT_SECRET}
+    configs:
+      - source: setup
+        target: /wonton/setup.sh
+    restart: "no"
 
 configs:
-  site:
-    file: web/default.conf.template
-  page:
-    file: web/index.html
-  tokens:
-    file: web/tokens.css
+  setup:
+    file: ./setup/nextcloud-setup.sh
+  health:
+    file: ./healthcheck/nextcloud-health.sh
 
 x-wonton:
   spec: "0.5"
-  # 换成你自己的：反向域名形式，装上以后不能改。
-  id: app.example.hello
-  version: 0.1.1
+  id: com.nextcloud.nextcloud
+  version: 0.1.0
   kind: app
-  title: { zh: 你好, en: Hello }
-  description: { zh: 向登录的人问好的示例网页, en: An example page that greets whoever is signed in }
+  title: { en: Nextcloud }
+  description:
+    zh: 自己家的网盘：文件、相册、日历、办公一站都有，手机电脑都好用
+    en: "Your self-hosted cloud: files, photos, calendar and office in one place"
   icon: icon.svg
   notices: [NOTICE]
-  screenshots: [screenshots/home.png]
-  author: { name: Example }
-  homepage: https://nginx.org
-  # 应用（这里是 nginx）的许可证；插件包自己的许可证写在仓库的 LICENSE 里。
-  license: BSD-2-Clause
+  author: { name: geraldpeng6 }
+  homepage: https://nextcloud.com
+  # 应用（Nextcloud）的许可证；MariaDB（GPL-2.0）和 Valkey（BSD-3-Clause）作为独立容器运行，
+  # 许可声明见 NOTICE。
+  license: AGPL-3.0-only
   tags:
-    zh: [工具]
-    en: [Tools]
+    zh: [网盘, 文件, 同步, 相册]
+    en: [Cloud, Files, Sync, Photos]
   about:
     zh: |
-      一个示例网页：登录以后，页面会向你问好。新建插件时可以照着改。
+      文件、照片、日历、联系人、待办、Markdown 笔记和在线办公，装一个 Nextcloud 全都有。手机自动备份照片，
+      电脑用客户端同步文件夹，浏览器里随时翻。
+
+      打开就用：云吞的身份进来就是管理员，不用再注册或登录一次。首次启动会从应用商店装官方的 user_oidc
+      应用，之后接云吞登录，所以要出网。
+
+      数据存在自己家里；文件通过网页或 WebDAV 访问。
     en: |
-      An example page: once you are signed in, the page says hello. Copy it as a starting point for a new plugin.
-  release_notes: { zh: 名字和说明更新。, en: Product name and description update. }
+      Files, photos, calendar, contacts, tasks, Markdown notes and office suites: one Nextcloud has them all.
+      Your phone backs up photos automatically, your computer syncs folders with the desktop client, and the
+      browser is always at hand.
+
+      Opening the page is enough: your Wonton identity signs in as the admin, no second account or login. The
+      first start installs the official user_oidc app from the app store to hook up Wonton sign-in, so it needs
+      internet access.
+
+      Everything stays at home; files are reachable over the web UI and WebDAV.
+  release_notes: { zh: 第一版。, en: First release. }
   webui:
-    service: web
+    service: nextcloud
     port: 80
-    # 示例页回显网关注入的用户名，见 https://github.com/geraldpeng6/wonton-docs/blob/main/plugin-spec.md#网关代登录sso-proxy。
-    sso: proxy
-    proxy:
-      headers:
-        Remote-User: "{user}"
-  # 能放到底栏的页面，见 https://github.com/geraldpeng6/wonton-docs/blob/main/plugin-spec.md#底栏页面tabs。放不放由用户决定。
-  tabs:
-    - id: home
-      title: { zh: 主页, en: Home }
-      icon: tabs/home.svg
-      icon_selected: tabs/home-fill.svg
-      path: /
-      # 这个页面没做适配，用默认的 inset：页面夹在 App 的栏中间，不会被挡。
-      # 想让内容从栏下滚过，写 layout: edge-to-edge，并用 --wonton-inset-* 留出栏的位置。
-  permissions: []
-  # 上游 nginx 官方镜像，amd64 和 arm64 都有；上游没写最低内存，按本机空闲实测取整（实测约 24M，取 64M）。
+    # 直接进 user_oidc 的登录入口，落在云吞的登录页，不看 Nextcloud 自己的登录表单。
+    # user_oidc 按自增 ID 路由登录入口，setup 里断言它恰好是 1（新库的第一个提供方）。
+    path: /apps/user_oidc/login/1
+    sso: oidc
+    oidc:
+      redirect_paths: [/apps/user_oidc/code]
+  secrets:
+    db_password:
+      generate: { bytes: 32 }
+    db_root_password:
+      generate: { bytes: 32 }
+    valkey_password:
+      generate: { bytes: 32 }
+    # Nextcloud 首次安装必须有管理员账号；由官方镜像的安装流程创建，密码核心生成，日常登录走云吞身份。
+    admin_password:
+      generate: { bytes: 32 }
+  permissions:
+    # 首次启动从应用商店装 user_oidc 应用；平时应用商店检查、外部链接预览也要出网。
+    - network.egress
+    # 用云吞用户名创建 Nextcloud 的管理员账号（官方镜像 NEXTCLOUD_ADMIN_USER 的值）。
+    - owner.identity
+  # 上游文档（admin manual 的 system requirements）写的最低内存是 512M；插件含 MariaDB 和 Valkey，
+  # 取 1G。镜像支持 amd64 和 arm64（Docker Hub 清单列表）。
   requirements:
     arch: [amd64, arm64]
-    memory: 64M
+    memory: 1G
