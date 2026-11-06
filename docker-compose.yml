@@ -107,6 +107,10 @@ services:
       WONTON_OIDC_ISSUER: ${WONTON_OIDC_ISSUER}
       WONTON_OIDC_CLIENT_ID: ${WONTON_OIDC_CLIENT_ID}
       WONTON_OIDC_CLIENT_SECRET: ${WONTON_OIDC_CLIENT_SECRET}
+    volumes:
+      # occ 和它要改的 config.php 在数据卷里（镜像自带的 /var/www/html 是空的，入口脚本只在跑
+      # apache/php-fpm 时才把代码同步进去；command 覆盖成 setup.sh 后必须自己挂卷）。
+      - ${WONTON_APP_DATA}/html:/var/www/html
     configs:
       - source: setup
         target: /wonton/setup.sh
