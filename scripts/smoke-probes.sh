@@ -25,24 +25,30 @@ marker_file() { # SMOKE_STATE 在 dev.sh probes 里是目录、在 e2e 里是文
 	fi
 }
 
-oidc_login() { # <jar 文件>：走完 OIDC 链把 Nextcloud 会话写进会话 jar。user_oidc 的 code 换会话在服务端做，
-	# 整条链（登录入口 → 身份提供方 → 回调）都是 302，curl 跟得完；会话已有效时 user_oidc 直接跳回首页，幂等。
-	local jar="$1" origin start code state body
+oidc_login() { # <jar 文件>：走完 OIDC 链把 Nextcloud 会话写进会话 jar。
+	# user_oidc 的回调 /apps/user_oidc/code 自己也是 302（换完会话跳回首页），不能一把 -L 跟到底——
+	# code/state 只出现在到达回调前的那个跳转地址上，所以逐跳跟；会话已有效时链里没有回调，
+	# user_oidc 把登录入口直接跳回首页，落到 Nextcloud 页面即视为已登录，幂等返回 0。
+	local jar="$1" origin url next code state
 	origin="$(origin_of "$SMOKE_WEB_URL")"
-	start="$(curl -sS --noproxy '*' -o /tmp/nc-login-resp -b "$jar" -c "$jar" \
-		-w '%{redirect_url}' "$origin/apps/user_oidc/login/1")" || { echo "进不了 user_oidc 登录入口"; return 1; }
-	[[ -n "$start" ]] || {
-		echo "登录入口没有 302（响应开头：$(head -c 200 /tmp/nc-login-resp | tr '\n' ' ')）"
-		return 1
-	}
-	final="$(curl -sS --noproxy '*' -o /dev/null -L -b "$jar" -c "$jar" -H 'Accept: text/html' \
-		-w '%{url_effective}' "$start")" || { echo "authorize 链失败：$start"; return 1; }
-	code="$(qparam "$final" code)"
-	state="$(qparam "$final" state)"
-	[[ -n "$code" && -n "$state" ]] || { echo "回调里没有 code/state：$final"; return 1; }
-	curl -sS --noproxy '*' -o /dev/null -b "$jar" -c "$jar" --fail-with-body \
-		--get --data-urlencode "code=$code" --data-urlencode "state=$state" \
-		"$origin/apps/user_oidc/code" || { echo "code 换会话失败"; return 1; }
+	url="$origin/apps/user_oidc/login/1"
+	for _ in 1 2 3 4 5 6 7 8; do
+		[[ "$url" == *"/apps/user_oidc/code?"* ]] && break
+		next="$(curl -sS --noproxy '*' -o /tmp/nc-login-resp -b "$jar" -c "$jar" -w '%{redirect_url}' "$url")" ||
+			{ echo "请求失败：$url"; return 1; }
+		[[ -n "$next" ]] && url="$next"
+	done
+	if [[ "$url" == *"/apps/user_oidc/code?"* ]]; then
+		code="$(qparam "$url" code)"
+		state="$(qparam "$url" state)"
+		[[ -n "$code" && -n "$state" ]] || { echo "回调里没有 code/state：$url"; return 1; }
+		curl -sS --noproxy '*' -o /dev/null -b "$jar" -c "$jar" --fail-with-body \
+			--get --data-urlencode "code=$code" --data-urlencode "state=$state" \
+			"$origin/apps/user_oidc/code" || { echo "code 换会话失败"; return 1; }
+	else
+		grep -qi 'nextcloud' /tmp/nc-login-resp ||
+			{ echo "登录链没有产生回跳，也没落到 Nextcloud 页面：$(head -c 200 /tmp/nc-login-resp | tr '\n' ' ')"; return 1; }
+	fi
 }
 
 web_assert() { # 未登录 Nextcloud 时根路径 302 到登录页：登录页就是应用的真实页面
@@ -52,7 +58,9 @@ web_assert() { # 未登录 Nextcloud 时根路径 302 到登录页：登录页�
 identity_check() { # Nextcloud 的“当前用户”接口（OCS XML）：断言认出的就是主人本人，且在 admin 组（管理员）
 	local me
 	oidc_login "$SMOKE_JAR" || return 1
-	me="$(web_get '/ocs/v1.php/cloud/user' -H 'OCS-APIRequest: true')" || { echo "当前用户接口失败：$me"; return 1; }
+	# 不用 web_get：SMOKE_WEB_URL 可能带 webui.path 入口路径，拼子路径会错，这里一律用源点。
+	me="$(curl -sS --noproxy '*' --fail-with-body -b "$SMOKE_JAR" -H 'OCS-APIRequest: true' \
+		"$(origin_of "$SMOKE_WEB_URL")/ocs/v1.php/cloud/user")" || { echo "当前用户接口失败：$me"; return 1; }
 	grep -q "<id>$SMOKE_OWNER</id>" <<<"$me" || { echo "当前用户不是 $SMOKE_OWNER：$(head -c 300 <<<"$me")"; return 1; }
 	grep -q '<element>admin</element>' <<<"$me" || { echo "$SMOKE_OWNER 不在 admin 组：$(head -c 300 <<<"$me")"; return 1; }
 }
