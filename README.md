@@ -24,6 +24,8 @@ Nextcloud 33，MariaDB 存元数据，Valkey 做缓存、文件锁和 PHP 会话
 - `webui.path` 指向 `/apps/user_oidc/login/1`，打开就进云吞登录，不落在 Nextcloud 自己的登录表单；
   user_oidc 按自增 ID 路由，setup 里断言提供方 ID 是 1。
 - 插件申请了出网（首次启动装 user_oidc 用），内部服务按规范用核心生成的密钥加了密码。
+- 开了 `allow_local_remote_servers`：签发方是插件网络里的内部地址，不是回环，Nextcloud 默认不让
+  HTTP 客户端请求本地地址，不开登录会报“无法连接身份提供方”。
 
 ## 图标
 

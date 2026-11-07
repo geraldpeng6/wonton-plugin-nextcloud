@@ -171,6 +171,8 @@ x-wonton:
     sso: oidc
     oidc:
       redirect_paths: [/apps/user_oidc/code]
+      # user_oidc 在令牌端点把密钥放在请求体里。
+      token_endpoint_auth_method: client_secret_post
   secrets:
     db_password:
       generate: { bytes: 32 }

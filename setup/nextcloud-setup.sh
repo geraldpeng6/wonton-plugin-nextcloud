@@ -29,6 +29,9 @@ for _ in 1 2 3 4 5; do
 done
 [ -n "$proxy_ip" ] || { echo "解析不了 $auth_host（核心身份提供方别名），拿不到 trusted_proxies" >&2; exit 1; }
 occ config:system:set trusted_proxies 0 --value="$proxy_ip"
+# 签发方是插件网络里的内网名字，不是回环：Nextcloud 的 HTTP 客户端默认拒绝本地地址，放行（否则登录页报
+# "Could not reach the OpenID Connect provider."）。--type boolean 要给，只给 --value 1 会存成字符串判断不过。
+occ config:system:set allow_local_remote_servers --value true --type boolean
 
 # 容器只经核心网关访问，TLS 在网关上终结；放开 user_oidc 的 https 限制，开发环境（http）也能走 OIDC。
 occ config:app:set user_oidc allow_insecure_http --value 1
