@@ -5,3 +5,8 @@ updates:
     directory: /
     schedule:
       interval: daily
+    # MariaDB 的数据目录不做跨大版本升级（要导出再导入），大版本升级 PR 会被自动合并风险挡不住；
+    # dependabot 只跟 11.x 的补丁/小版本（镜像带 MARIADB_AUTO_UPGRADE，数据目录可平滑升级）。
+    ignore:
+      - dependency-name: mariadb
+        update-types: ["version-update:semver-major"]
