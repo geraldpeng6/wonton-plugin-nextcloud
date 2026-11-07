@@ -123,7 +123,7 @@ configs:
     file: ./healthcheck/nextcloud-health.sh
 
 x-wonton:
-  spec: "0.5"
+  spec: "0.6"
   id: com.nextcloud.nextcloud
   version: 0.1.0
   kind: app
