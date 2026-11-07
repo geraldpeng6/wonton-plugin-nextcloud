@@ -1,0 +1,16 @@
+# .keep — 暂停 OIDC e2e，等 oidc-relay 部件合进模板
+
+原因：等 oidc-relay 部件。dev 下插件容器连不到 `auth.<实例>.wonton.localhost:<网页端口>` 的根因已查清：
+curl 按 RFC 6761 把 `*.localhost` 短路成 127.0.0.1，不走 Docker DNS（getent 正常，所以 trusted_proxies
+拿到的核心地址是对的），连接拒绝是连到了自己的 127.0.0.1。负责人安排在套件里做现成的转发部件
+oidc-relay（另一个 omp 在模板上做），合进模板并通知后：
+
+1. `scripts/dev.sh kit-update` 拿新套件；
+2. 按模板 README 改 nextcloud：web 放网络，oidc-relay 和 setup 都写 `network_mode: "service:web"`，
+   setup 的 depends_on 加 oidc-relay（service_started）；
+3. 重跑 `~/wonton-dev/e2e/smoke.sh nextcloud` 六项，结果回填 PR
+   geraldpeng6/wonton-plugin-nextcloud#1 的"验证"节，然后回「已完成，等审查」。
+
+在那之前不再试 OIDC 链路（check --official、截图等非 OIDC 项不受影响）。
+
+期限：24 小时（2026-11-08 09:00 前）。超期未通知则在此文件追加进展并继续等。

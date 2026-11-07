@@ -57,6 +57,7 @@ provider_id="$(occ user_oidc:provider wonton --output json | php -r 'echo json_d
 	exit 1
 }
 # 登录时 user_oidc 会取发现文档；这里先自检一次，取不到就装不上并写明原因（失败即停，别等用户登录才失败）。
+# 请求是发往 *.localhost 的：容器里 curl 会把它当 127.0.0.1，由同 netns 的 oidc-relay 转给核心。
 curl -fsS --noproxy '*' "$WONTON_OIDC_ISSUER/.well-known/openid-configuration" >/dev/null || {
 	echo "取不到身份提供方发现文档：$WONTON_OIDC_ISSUER/.well-known/openid-configuration（容器内解析或访问失败）" >&2
 	exit 1
