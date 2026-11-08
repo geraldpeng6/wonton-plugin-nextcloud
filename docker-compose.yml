@@ -207,7 +207,7 @@ configs:
 x-wonton:
   spec: "0.8"
   id: com.nextcloud.nextcloud
-  version: 0.1.0
+  version: 0.1.1
   kind: app
   title: { en: Nextcloud }
   description:
@@ -246,7 +246,7 @@ x-wonton:
       Everything stays at home. The local admin account is your Wonton username; the core generates its password
       and keeps it in the core's plugin secret file, the app never shows it — a fallback if the identity provider
       is down.
-  release_notes: { zh: 第一版。, en: First release. }
+  release_notes: { zh: 应用改用 8080，默认不再和核心网页端口抢 80；端口被占时转发写明原因并退出。转发的探针改成比对容器的网络沙箱并真的验活，应用单独重启后转发会自己重建回来；应用的健康检查也经转发确认登录提供方还能走。补 user_oidc 的许可和来源，README 补转发说明。, en: The app now listens on 8080 so it no longer competes with the core web port 80 by default and the relay exits with a stated reason when the port is taken. The relay probe now compares the container netns and really verifies the forward so the relay rebuilds itself after the app restarts alone; the app health check also confirms through the forward that the identity provider is reachable. Adds the user_oidc license and source and documents the relay in the README. }
   webui:
     service: nextcloud
     port: 8080
