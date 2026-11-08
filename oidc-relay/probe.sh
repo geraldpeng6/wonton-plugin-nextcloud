@@ -5,5 +5,5 @@
 set -u
 p="$(cat /tmp/oidc-relay.port 2>/dev/null)" || exit 0
 h="$(cat /tmp/oidc-relay.host 2>/dev/null)" || exit 1
-printf 'GET / HTTP/1.0\r\nHost: %s\r\n\r\n' "$h" |
+printf 'GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n' "$h" |
 	socat -T 4 - "TCP:127.0.0.1:$p,connect-timeout=2" | grep -q 'HTTP/'
