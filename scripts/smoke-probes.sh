@@ -86,16 +86,18 @@ data_write() { # 建一个带随机标记的文件夹、传一个内容也是标
 }
 
 data_check() { # 读回标记：文件内容一致，目录也在
-	local marker dir origin body listing
+	local marker dir origin body listing token
 	marker="$(cat "$(marker_file)")"
 	dir="wonton-smoke-$marker"
 	origin="$(origin_of "$SMOKE_WEB_URL")"
 	oidc_login "$SMOKE_JAR" || return 1
-	body="$(curl -sS --noproxy '*' -b "$SMOKE_JAR" --fail-with-body \
-		"$origin/remote.php/dav/files/$SMOKE_OWNER/$dir/marker.txt")" ||
+	token="$(requesttoken "$SMOKE_JAR")" || { echo "取不到 CSRF 令牌"; return 1; }
+	body="$(curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		--fail-with-body "$origin/remote.php/dav/files/$SMOKE_OWNER/$dir/marker.txt")" ||
 		{ echo "读不回 marker.txt（目录 $dir 不在或内容丢了）"; return 1; }
 	[[ "$body" == "$marker" ]] || { echo "marker.txt 内容对不上：写了 $marker，读到 ${body:0:64}"; return 1; }
-	listing="$(curl -sS --noproxy '*' -b "$SMOKE_JAR" --fail-with-body -X PROPFIND -H 'Depth: 1' \
+	listing="$(curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		--fail-with-body -X PROPFIND -H 'Depth: 1' \
 		"$origin/remote.php/dav/files/$SMOKE_OWNER/")" ||
 		{ echo "列根目录失败"; return 1; }
 	grep -q "$dir" <<<"$listing" || { echo "根目录里找不到 $dir"; return 1; }
