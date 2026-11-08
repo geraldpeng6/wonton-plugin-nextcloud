@@ -33,12 +33,16 @@ oidc_login() { # <jar 文件>：走完 OIDC 链把 Nextcloud 会话写进会话 
 	# 同一台机器可能同时跑两个 nextcloud 冒烟，响应体不能落在固定的 /tmp 名字上
 	resp="$(mktemp)"
 	origin="$(origin_of "$SMOKE_WEB_URL")"
-	# e2e 在身份项之前就会跑数据钩子，那时核心会话还没建立、jar 是空的（第一步就 401）。有令牌就自己
-	# 登一次核心：插件主机名去掉第一段就是实例域，登录端点在那上面，已登录时幂等；没有令牌（dev.sh probes）就跳过。
+	# e2e 在身份项之前就会跑数据钩子，那时核心会话还没建立、jar 是空的（第一步就 401）。有令牌就照
+	# web_login 的做法自己登：先拿令牌换核心会话，再打开插件根让网关把会话换成应用的，之后照常走登录链。
+	# 都带 -b 才不会把 jar 覆盖没了；已登录时幂等；没有令牌（dev.sh probes）就跳过。
 	if [[ -n ${SMOKE_TOKEN:-} ]]; then
-		curl -sS --noproxy '*' --max-time 30 -o /dev/null -c "$jar" \
-			--data-urlencode "token=$SMOKE_TOKEN" "$(sed -E 's#^(https?://)[^./]+\.#\1#' <<<"$origin")/_wonton/login" ||
+		core="${SMOKE_BASE:-$(sed -E 's#^(https?://)[^./]+\.#\1#' <<<"$origin")}"
+		curl -sS --noproxy '*' --max-time 30 -o /dev/null -b "$jar" -c "$jar" \
+			--data-urlencode "token=$SMOKE_TOKEN" "$core/_wonton/login" ||
 			{ echo "核心登录失败"; rm -f "$resp"; return 1; }
+		curl -sS --noproxy '*' --max-time 60 -o /dev/null -L -b "$jar" -c "$jar" -H 'Accept: text/html' "$origin/" ||
+			{ echo "打开插件根失败"; rm -f "$resp"; return 1; }
 	fi
 	url="$origin/apps/user_oidc/login/1"
 	for _ in 1 2 3 4 5 6 7 8; do
