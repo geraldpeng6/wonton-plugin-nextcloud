@@ -61,8 +61,8 @@ oidc_login() { # <jar 文件>：走完 OIDC 链把 Nextcloud 会话写进会话 
 	else
 		grep -qi 'nextcloud' "$resp" ||
 			{ echo "登录链没有产生回跳，也没落到 Nextcloud 页面：$(head -c 200 "$resp" | tr '\n' ' ')"; rm -f "$resp"; return 1; }
-		rm -f "$resp"
 	fi
+	rm -f "$resp"
 }
 
 web_assert() { # 未登录 Nextcloud 时根路径 302 到登录页：登录页就是应用的真实页面

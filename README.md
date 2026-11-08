@@ -32,8 +32,8 @@
   （崩溃被 restart 拉起、`docker restart`）会换掉共享的 netns，此时旧监听已经不生效：探针发现转发不通
   就退出，由 restart 把转发重建到新 netns 里。
 - 插件申请了出网（首次启动装 user_oidc 用），内部服务按规范用核心生成的密钥加了密码。
-- 开了 `allow_local_remote_servers`：签发方是插件网络里的内部地址，不是回环，Nextcloud 默认不让
-  HTTP 客户端请求本地地址，不开登录会报“无法连接身份提供方”。
+- 开了 `allow_local_remote_servers`：签发方解析成回环（`*.localhost` 由转发接住）或插件网络里的内网地址，
+  Nextcloud 默认不让 HTTP 客户端请求本地地址，不开登录会报“无法连接身份提供方”。
 
 ## 图标
 
