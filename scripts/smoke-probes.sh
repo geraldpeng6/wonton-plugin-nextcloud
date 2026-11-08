@@ -29,25 +29,28 @@ oidc_login() { # <jar 文件>：走完 OIDC 链把 Nextcloud 会话写进会话 
 	# user_oidc 的回调 /apps/user_oidc/code 自己也是 302（换完会话跳回首页），不能一把 -L 跟到底——
 	# code/state 只出现在到达回调前的那个跳转地址上，所以逐跳跟；会话已有效时链里没有回调，
 	# user_oidc 把登录入口直接跳回首页，落到 Nextcloud 页面即视为已登录，幂等返回 0。
-	local jar="$1" origin url next code state
+	local jar="$1" origin url next code state resp
+	# 同一台机器可能同时跑两个 nextcloud 冒烟，响应体不能落在固定的 /tmp 名字上
+	resp="$(mktemp)"
 	origin="$(origin_of "$SMOKE_WEB_URL")"
 	url="$origin/apps/user_oidc/login/1"
 	for _ in 1 2 3 4 5 6 7 8; do
 		[[ "$url" == *"/apps/user_oidc/code?"* ]] && break
-		next="$(curl -sS --noproxy '*' -o /tmp/nc-login-resp -b "$jar" -c "$jar" -w '%{redirect_url}' "$url")" ||
-			{ echo "请求失败：$url"; return 1; }
+		next="$(curl -sS --noproxy '*' -o "$resp" -b "$jar" -c "$jar" -w '%{redirect_url}' "$url")" ||
+			{ echo "请求失败：$url"; rm -f "$resp"; return 1; }
 		[[ -n "$next" ]] && url="$next"
 	done
 	if [[ "$url" == *"/apps/user_oidc/code?"* ]]; then
 		code="$(qparam "$url" code)"
 		state="$(qparam "$url" state)"
-		[[ -n "$code" && -n "$state" ]] || { echo "回调里没有 code/state：$url"; return 1; }
+		[[ -n "$code" && -n "$state" ]] || { echo "回调里没有 code/state：$url"; rm -f "$resp"; return 1; }
 		curl -sS --noproxy '*' -o /dev/null -b "$jar" -c "$jar" --fail-with-body \
 			--get --data-urlencode "code=$code" --data-urlencode "state=$state" \
-			"$origin/apps/user_oidc/code" || { echo "code 换会话失败"; return 1; }
+			"$origin/apps/user_oidc/code" || { echo "code 换会话失败"; rm -f "$resp"; return 1; }
 	else
-		grep -qi 'nextcloud' /tmp/nc-login-resp ||
-			{ echo "登录链没有产生回跳，也没落到 Nextcloud 页面：$(head -c 200 /tmp/nc-login-resp | tr '\n' ' ')"; return 1; }
+		grep -qi 'nextcloud' "$resp" ||
+			{ echo "登录链没有产生回跳，也没落到 Nextcloud 页面：$(head -c 200 "$resp" | tr '\n' ' ')"; rm -f "$resp"; return 1; }
+		rm -f "$resp"
 	fi
 }
 
