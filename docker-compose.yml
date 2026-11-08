@@ -80,25 +80,6 @@ services:
       start_interval: 5s
     restart: unless-stopped
 
-  cron:
-    # 后台任务（回收站清理、版本清理等）按官方推荐跑在共享同一数据卷的 sidecar，每 5 分钟一次
-    # （镜像内置的 www-data crontab）。同一镜像按 compose 子集要求各写一遍，不用锚点。
-    image: nextcloud:33.0.10@sha256:1a18e5248b836a2f925ce553bd28d7dd69b0205632372f4c506356342182be8e
-    entrypoint: /cron.sh
-    depends_on:
-      nextcloud:
-        condition: service_healthy
-    volumes:
-      - ${WONTON_APP_DATA}/html:/var/www/html
-    healthcheck:
-      # crond 就是这个服务的全部职责：进程在，每 5 分钟的 cron.php 就会跑；应用本身坏了由 nextcloud 的检查报。
-      test: ["CMD", "pgrep", "-f", "crond"]
-      interval: 30s
-      timeout: 5s
-      start_period: 30s
-      start_interval: 2s
-    restart: unless-stopped
-
   oidc-relay:
     # 容器里的 curl 和 PHP 的 HTTP 客户端（libcurl/glibc）按 RFC 6761 把 *.localhost 直接当 127.0.0.1，不走
     # Docker DNS（getent 正常，所以别处的解析没问题），而核心身份提供方的名字正好是 auth.<基础域名>。
@@ -107,7 +88,7 @@ services:
     # 登记了别名，直接跑在宿主上时是 /etc/hosts 指向网桥），不用转发：这时睡眠，健康检查直接过——
     # 否则核心网页端口是 80 时会和 apache 抢同一个地址。转发目标（主机、端口）由启动命令写进 /tmp 给探针用。
     # 共用 netns 有个代价：应用容器一重启，本容器就留在旧沙箱里（转发看着还通，应用却连不上 127.0.0.1），
-    # 只有重建容器能回来，探针因此比对自身地址和 DNS 里 `nextcloud` 的地址来认这件事。
+    # 只有重建容器能回来，探针因此拿应用写下的 netns 号和自己的比来认这件事。
     image: alpine/socat:1.8.1.3@sha256:e8a6e8868a8e6e01d9c2c321a8f8d4474d2d741d962462e5c5a124a8e66a0055
     network_mode: "service:nextcloud"
     depends_on:
@@ -115,6 +96,9 @@ services:
         condition: service_started
     environment:
       WONTON_OIDC_ISSUER: ${WONTON_OIDC_ISSUER}
+    volumes:
+      # 只读挂应用的网页目录：读 `/wonton/app/.wonton-netns`（应用的健康检查写的 netns 号）来判断沙箱有没有换过。
+      - ${WONTON_APP_DATA}/html:/wonton/app:ro
     configs:
       - source: relay-probe
         target: /wonton/relay-probe.sh
@@ -157,6 +141,29 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+    restart: unless-stopped
+
+  cron:
+    # 后台任务（回收站清理、版本清理等）按官方推荐跑在共享同一数据卷的 sidecar，每 5 分钟一次
+    # （镜像内置的 www-data crontab）。同一镜像按 compose 子集要求各写一遍，不用锚点。
+    # 要等转发先起来：应用的健康检查经转发探身份提供方，而 compose 按文件顺序创建服务——转发排在后面时，
+    # 这里等应用 healthy 就把它前面的创建全堵住，互相等死。depends_on 写明，别只靠顺序。
+    image: nextcloud:33.0.10@sha256:1a18e5248b836a2f925ce553bd28d7dd69b0205632372f4c506356342182be8e
+    entrypoint: /cron.sh
+    depends_on:
+      nextcloud:
+        condition: service_healthy
+      oidc-relay:
+        condition: service_started
+    volumes:
+      - ${WONTON_APP_DATA}/html:/var/www/html
+    healthcheck:
+      # crond 就是这个服务的全部职责：进程在，每 5 分钟的 cron.php 就会跑；应用本身坏了由 nextcloud 的检查报。
+      test: ["CMD", "pgrep", "-f", "crond"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      start_interval: 2s
     restart: unless-stopped
 
   setup:

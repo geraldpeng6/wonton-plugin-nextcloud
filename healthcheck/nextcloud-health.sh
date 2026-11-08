@@ -6,6 +6,8 @@
 # 再检查一次身份提供方：登录要靠 127.0.0.1:<核心端口> 上的转发（只有签发方是 *.localhost 才起转发），
 # 转发没了或应用被换进了新沙箱时这条从应用这一侧就能看见，网页登录才不会悄悄坏掉。
 set -eu
+# 记下本容器的 netns 号（在数据卷里），relay 拿它和自己比：对不上就是应用重启换过沙箱、转发已经失效。
+readlink /proc/self/ns/net >/var/www/html/.wonton-netns
 curl -fsS http://127.0.0.1:8080/status.php | grep -q '"installed":true'
 php -r "try { new PDO('mysql:host=' . getenv('MYSQL_HOST') . ';dbname=' . getenv('MYSQL_DATABASE'), getenv('MYSQL_USER'), getenv('MYSQL_PASSWORD')); } catch (Throwable \$e) { exit(1); }"
 if [ -n "${WONTON_OIDC_ISSUER:-}" ]; then
