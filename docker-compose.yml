@@ -114,6 +114,8 @@ services:
           *.localhost) ;;
           *) exec sleep infinity ;;
         esac
+        # 核心网页端口和应用端口相同就必然撞（谁先绑另一头都起不来），先喊一声，别等人从 AH00072 里猜。
+        [ "$$p" = 8080 ] && echo "核心网页端口和应用端口都是 8080，会在 127.0.0.1:8080 上撞车" >&2
         echo "$$p" > /tmp/oidc-relay.port
         echo "$$h" > /tmp/oidc-relay.host
         socat "TCP-LISTEN:$${p},bind=127.0.0.1,fork,reuseaddr" "TCP:$$h:$${p}" &

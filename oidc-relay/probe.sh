@@ -9,7 +9,8 @@
 set -u
 [ -f /tmp/oidc-relay.host ] || exit 0
 app="$(cat /wonton/app/.wonton-netns 2>/dev/null)"
-if [ -n "$app" ] && [ "$app" != "$(readlink /proc/self/ns/net)" ]; then exit 1; fi
+own="$(readlink /proc/self/ns/net 2>/dev/null)"
+[ -n "$own" ] && [ -n "$app" ] && [ "$own" != "$app" ] && exit 1
 p="$(cat /tmp/oidc-relay.port 2>/dev/null)" || exit 1
 h="$(cat /tmp/oidc-relay.host 2>/dev/null)" || exit 1
 # 写入端要按住一会儿：socat 在 stdin 一 EOF 就把连接也关掉，核心回包稍慢就没赶上（实测裸 printf 拿不到，
