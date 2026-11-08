@@ -1,7 +1,7 @@
 # 云吞插件：Nextcloud
 
 自托管网盘，文件、相册、共享和 WebDAV 都在（日历、办公这些应用在应用商店里另装）。插件用 Nextcloud
-官方镜像（apache 变体）装上游 Nextcloud 34，MariaDB 存元数据，Valkey 做缓存、文件锁和 PHP 会话，
+官方镜像（apache 变体）装上游 Nextcloud 35，MariaDB 存元数据，Valkey 做缓存、文件锁和 PHP 会话，
 另有一个后台任务 sidecar。
 
 登录经云吞的身份提供方（Ory Hydra）：首次启动从应用商店装官方 [user_oidc](https://apps.nextcloud.com/apps/user_oidc)
