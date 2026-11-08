@@ -132,9 +132,17 @@ services:
         child=$$!
         trap 'kill $$child 2>/dev/null' EXIT
         # nextcloud 单独重启（崩溃后被 restart 拉起、docker restart）会换掉 netns，socat 的监听留在旧的沙箱里，
-        # 进程还活着但转发已经不通，只有重建容器才能回到新沙箱：定期探一次，不通就退出让 restart 重来
+        # 进程还活着但转发已经不通，只有重建容器才能回到新沙箱：探不通就退出让 restart 重来
         # （重建中的沙箱可能先给到不通的，退一次再退一次，Docker 对快速退出的容器有退避）。
-        while sh /wonton/relay-probe.sh && sleep 15; do :; done
+        # 刚起来时 socat 还要时间 bind、核心也可能短暂不可达，连续三次（约 20 秒）都不通才算坏。
+        fails=0
+        while :; do
+          if sh /wonton/relay-probe.sh; then fails=0; else
+            fails=$$((fails + 1))
+            [ "$$fails" -lt 3 ] || break
+          fi
+          sleep 10
+        done
         echo "经 127.0.0.1:$$p 到不了核心，退出等重建" >&2
         exit 1
     healthcheck:
