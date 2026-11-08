@@ -12,4 +12,4 @@ permissions:
 
 jobs:
   check:
-    uses: geraldpeng6/wonton-plugin-template/.github/workflows/plugin-check.yml@fc3cc0f4addac2002a6b4e513ac1ae0b325f66a8
+    uses: geraldpeng6/wonton-plugin-template/.github/workflows/plugin-check.yml@04bda99cf2b82f820e89f64902dc63cf81289658
