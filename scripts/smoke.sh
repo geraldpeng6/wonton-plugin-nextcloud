@@ -37,7 +37,10 @@ LOG="$root/.wonton/smoke.log"
 : >"$LOG"
 instance="smoke$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 SMOKE_DIR="$copy"
-SMOKE_STATE="$copy/.wonton"
+SMOKE_DEV_STATE="$copy/.wonton"
+# 数据标记是个空文件（与 e2e 冒烟的约定一致）：插件钩子只当它是文件，不往里建目录。
+SMOKE_STATE="$work/data-marker"
+: >"$SMOKE_STATE"
 SMOKE_INSTANCE="$instance"
 SMOKE_JAR="$copy/.wonton/session.cookies"
 SMOKE_TOOLS="$work/tools.json"
@@ -182,7 +185,8 @@ if [[ "$DATA_NA" != 1 ]] && (( DATA_HOOKS )) && [[ -n "$upgrade_from" ]]; then
   if probes_dev_t 600 install --yes "$upgrade_from" >>"$LOG" 2>&1 &&
     probes_status_wait "$PROBES_PLUGIN_ID" 40 >/dev/null; then
     data_upgrade_base=1
-    # 钩子要用网页地址：这一轮在主安装之前，probes_run 还没取过。
+    # 钩子要用网页地址和用户会话：这一轮在主安装之前，probes_run 还没取过、也没登录过。
+    probes_dev session >>"$LOG" 2>&1 || say "升级起点上会话建立失败（data_write 可能 401）"
     if probes_web_url 升级保数据 && probes_data_write; then data_wrote=1; else
       fail 升级保数据 "data_write 失败（tag $upgrade_from），见 $LOG 末尾：$(tail -c 200 "$LOG" | tr '\n' ' ')"
     fi
