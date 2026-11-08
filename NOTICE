@@ -694,3 +694,10 @@ MariaDB Server 由 MariaDB Foundation 和贡献者开发，许可证 GPL-2.0；�
 服务 `valkey` 用镜像 `valkey/valkey:8.1.11-alpine`（固定摘要），作为独立容器运行，不链接进插件包。
 Valkey 由 Valkey 贡献者开发，许可证 BSD-3-Clause。
 项目地址：https://valkey.io/
+
+身份提供方应用
+==============
+
+插件首次启动时用 Nextcloud 官方应用商店（Nextcloud App Store）装官方 user_oidc 应用，装进插件自己的数据卷，
+不随插件包分发。user_oidc 由 Nextcloud GmbH 和贡献者开发，许可证 AGPL-3.0-only。
+项目地址：https://github.com/nextcloud/user_oidc

@@ -28,9 +28,10 @@
   user_oidc 按自增 ID 路由，setup 里断言提供方 ID 是 1。
 - 容器里的 curl 和 PHP 把 `*.localhost` 直接当 127.0.0.1，不走 Docker DNS，所以 `oidc-relay` 和 Nextcloud
   共 netns，在 `127.0.0.1:<核心端口>` 上把请求转给核心；基础域名换成别的域名时容器里走 Docker DNS，
-  转发不启动。应用因此听 8080 而不是 80，核心网页端口也用 8080 时 setup 会报出来。Nextcloud 单独重启
-  （崩溃被 restart 拉起、`docker restart`）会换掉共享的 netns，此时旧监听已经不生效：探针发现转发不通
-  就退出，由 restart 把转发重建到新 netns 里。
+  转发不启动。应用因此听 8080 而不是 80，核心网页端口也用 8080 时 setup 会报出来，转发绑不上时也会报。
+  共用 netns 的代价：Nextcloud 单独重启（崩溃被 restart 拉起、`docker restart`）会换掉沙箱，转发留在旧的
+  那个里——看着还通、应用却连不上。探针比较自己的地址和 DNS 里 `nextcloud` 的地址，加上经转发取一次答复，
+  判坏就退出、由 restart 重建回新沙箱；应用的健康检查也从应用这一侧探一次转发，坏了状态就不绿。
 - 插件申请了出网（首次启动装 user_oidc 用），内部服务按规范用核心生成的密钥加了密码。
 - 开了 `allow_local_remote_servers`：签发方解析成回环（`*.localhost` 由转发接住）或插件网络里的内网地址，
   Nextcloud 默认不让 HTTP 客户端请求本地地址，不开登录会报“无法连接身份提供方”。
