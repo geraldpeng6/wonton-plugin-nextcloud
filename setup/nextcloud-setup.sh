@@ -77,3 +77,17 @@ curl -fsS --max-time 10 --noproxy '*' "$WONTON_OIDC_ISSUER/.well-known/openid-co
 	echo "取不到身份提供方发现文档：$WONTON_OIDC_ISSUER/.well-known/openid-configuration（容器内解析或访问失败）" >&2
 	exit 1
 }
+
+# 发信（notify）：找回密码、分享邀请这些信交给核心的内部邮箱 SMTP（不认证、不加密），由核心转进收件人的
+# “Wonton”私聊，所以不配 SMTP 用户名密码。发件地址是完整的 WONTON_MAIL_FROM，而 Nextcloud 把发件人存成
+# mail_from_address（本地部分）拼 mail_domain（域名）两段，这里按 @ 拆开写。
+[ -n "$WONTON_SMTP_HOST" ] && [ -n "$WONTON_SMTP_PORT" ] ||
+	{ echo "核心没注入 WONTON_SMTP_HOST/WONTON_SMTP_PORT（notify 权限没生效？），发不了信" >&2; exit 1; }
+case "$WONTON_MAIL_FROM" in
+	*@*.*) ;;
+	*) echo "WONTON_MAIL_FROM 不是 <本地部分>@<域名> 的形状：$WONTON_MAIL_FROM" >&2; exit 1 ;;
+esac
+occ config:system:set mail_smtphost --value="$WONTON_SMTP_HOST"
+occ config:system:set mail_smtpport --value="$WONTON_SMTP_PORT"
+occ config:system:set mail_from_address --value="${WONTON_MAIL_FROM%%@*}"
+occ config:system:set mail_domain --value="${WONTON_MAIL_FROM#*@}"
