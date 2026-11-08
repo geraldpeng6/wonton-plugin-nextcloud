@@ -116,7 +116,7 @@ services:
         esac
         exec socat "TCP-LISTEN:$${p},fork,reuseaddr" "TCP:auth.$${h#*.}:$${p}"
     healthcheck:
-      test: ["CMD-SHELL", "socat -t 1 -u TCP:127.0.0.1:$${WONTON_APP_URL##*:},connect-timeout=2 /dev/null"]
+      test: ["CMD-SHELL", "socat -T 2 -u TCP:127.0.0.1:$${WONTON_APP_URL##*:},connect-timeout=2 /dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
