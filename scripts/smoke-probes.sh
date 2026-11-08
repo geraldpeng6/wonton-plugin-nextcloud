@@ -76,10 +76,11 @@ data_write() { # 建一个带随机标记的文件夹、传一个内容也是标
 	origin="$(origin_of "$SMOKE_WEB_URL")"
 	oidc_login "$SMOKE_JAR" || return 1
 	token="$(requesttoken "$SMOKE_JAR")" || { echo "取不到 CSRF 令牌"; return 1; }
-	curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" --fail-with-body -X MKCOL \
-		"$origin/remote.php/dav/files/$SMOKE_OWNER/wonton-smoke-$marker" >/dev/null ||
+	curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		--fail-with-body -X MKCOL "$origin/remote.php/dav/files/$SMOKE_OWNER/wonton-smoke-$marker" >/dev/null ||
 		{ echo "建目录失败"; return 1; }
-	curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" --fail-with-body -T "$(marker_file)" \
+	curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		--fail-with-body -T "$(marker_file)" \
 		"$origin/remote.php/dav/files/$SMOKE_OWNER/wonton-smoke-$marker/marker.txt" >/dev/null ||
 		{ echo "传文件失败"; return 1; }
 }
