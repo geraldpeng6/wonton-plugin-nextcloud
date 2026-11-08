@@ -5,5 +5,7 @@
 set -u
 p="$(cat /tmp/oidc-relay.port 2>/dev/null)" || exit 0
 h="$(cat /tmp/oidc-relay.host 2>/dev/null)" || exit 1
-printf 'GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n' "$h" |
-	socat -T 4 - "TCP:127.0.0.1:$p,connect-timeout=2" | grep -q 'HTTP/'
+# 写入端要按住一会儿：socat 在 stdin 一 EOF 就把连接也关掉，核心回包稍慢就没赶上（实测裸 printf 拿不到，
+# 按住之后再慢的服务也能收到）。有回包后由服务端的 close 结束，不会等满。
+{ printf 'GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n' "$h"; sleep 2; } |
+	socat -T 5 - "TCP:127.0.0.1:$p,connect-timeout=2" | grep -q 'HTTP/'
