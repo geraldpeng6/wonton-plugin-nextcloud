@@ -2,7 +2,7 @@ Nextcloud 标志
 ==============
 
 图标：Nextcloud
-来源：https://github.com/nextcloud/server/blob/v33.0.10/core/img/logo/logo.svg
+来源：https://github.com/nextcloud/server/blob/v34.0.5/core/img/logo/logo.svg
 版权：Nextcloud GmbH 和 Nextcloud 贡献者（上游仓库的 COPYING 是 AGPL-3.0 全文，见下）
 处理：官方白色矢量标志原样使用，等比放在 Nextcloud 官方品牌蓝（#0082C9）的纯色底上；没有重绘、
 改色（底色为官方规定）、拉伸、裁切或重新编码，也没有添加圆角、文字或阴影。
