@@ -65,16 +65,21 @@ identity_check() { # Nextcloud 的“当前用户”接口（OCS XML）：断言
 	grep -q '<element>admin</element>' <<<"$me" || { echo "$SMOKE_OWNER 不在 admin 组：$(head -c 300 <<<"$me")"; return 1; }
 }
 
+requesttoken() { # <jar>：DAV 的写操作靠会话 cookie 认证时要带 CSRF 令牌，否则回 401/412
+	curl -sS --noproxy '*' --fail-with-body -b "$1" "$(origin_of "$SMOKE_WEB_URL")/csrftoken" | jq -er '.token'
+}
+
 data_write() { # 建一个带随机标记的文件夹、传一个内容也是标记的文件，标记存进状态目录
-	local marker origin
+	local marker origin token
 	marker="$(head -c 12 /dev/urandom | base64 | tr -d '=+/' | head -c 16)"
 	printf '%s' "$marker" >"$(marker_file)"
 	origin="$(origin_of "$SMOKE_WEB_URL")"
 	oidc_login "$SMOKE_JAR" || return 1
-	curl -sS --noproxy '*' -b "$SMOKE_JAR" --fail-with-body -X MKCOL \
+	token="$(requesttoken "$SMOKE_JAR")" || { echo "取不到 CSRF 令牌"; return 1; }
+	curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" --fail-with-body -X MKCOL \
 		"$origin/remote.php/dav/files/$SMOKE_OWNER/wonton-smoke-$marker" >/dev/null ||
 		{ echo "建目录失败"; return 1; }
-	curl -sS --noproxy '*' -b "$SMOKE_JAR" --fail-with-body -T "$(marker_file)" \
+	curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" --fail-with-body -T "$(marker_file)" \
 		"$origin/remote.php/dav/files/$SMOKE_OWNER/wonton-smoke-$marker/marker.txt" >/dev/null ||
 		{ echo "传文件失败"; return 1; }
 }
