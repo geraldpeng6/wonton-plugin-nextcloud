@@ -203,7 +203,7 @@ configs:
     file: ./oidc-relay/probe.sh
 
 x-wonton:
-  spec: "0.7"
+  spec: "0.8"
   id: com.nextcloud.nextcloud
   version: 0.1.0
   kind: app
