@@ -20,7 +20,14 @@ occ config:system:set overwriteprotocol --value="$proto"
 occ config:system:set trusted_domains 1 --value="$hostport"
 
 auth_host="$(printf '%s' "$WONTON_OIDC_ISSUER" | cut -d/ -f3)"
-auth_host="${auth_host%%:*}" # 开发环境的 issuer 带端口，解析主机名要去掉
+auth_port="${auth_host##*:}" # 开发环境的 issuer 带端口
+auth_host="${auth_host%%:*}" # 解析主机名要去掉
+if [[ "$auth_host" == *.localhost && "$auth_port" == 8080 ]]; then
+	# oidc-relay 只在 *.localhost 时转发（见 compose 里它的注释），此时它要绑 127.0.0.1:8080，
+	# 和听 8080 的 apache 撞车：其中一个起不来，装不上。别的域名下转发不跑，端口相同没关系。
+	echo "核心网页端口和应用端口相同（都是 8080）：改成别的再装" >&2
+	exit 1
+fi
 proxy_ip=""
 for _ in 1 2 3 4 5; do
 	proxy_ip="$(getent ahostsv4 "$auth_host" | awk '{print $1; exit}')"
@@ -37,15 +44,15 @@ occ config:system:set allow_local_remote_servers --value true --type boolean
 occ config:app:set user_oidc allow_insecure_http --value 1
 
 # 密钥经环境变量传给 occ（--clientsecret-env），不进命令行参数。
-# 应用商店从这里经出口代理下 GitHub，实测会偶发 SSL EOF/超时（两次冒烟分别失败在 56 和 28）：重试三次，
-# 仍失败如实退出。
+# 应用商店从这里经出口代理下 GitHub，实测会偶发 SSL EOF/超时（两次冒烟分别失败在 56 和 28，一路重试到第三次仍失败）：
+# 重试五次、间隔十秒，仍失败如实退出。
 if [ ! -d /var/www/html/custom_apps/user_oidc ]; then
 	tries=0
 	until occ app:install user_oidc; do
 		tries=$((tries + 1))
-		[ "$tries" -lt 3 ] || { echo "应用商店装 user_oidc 失败 3 次" >&2; exit 1; }
+		[ "$tries" -lt 5 ] || { echo "应用商店装 user_oidc 失败 5 次" >&2; exit 1; }
 		echo "装 user_oidc 失败，重试（第 $tries 次）" >&2
-		sleep 5
+		sleep 10
 	done
 fi
 occ app:enable user_oidc
@@ -65,8 +72,8 @@ provider_id="$(occ user_oidc:provider wonton --output json | php -r 'echo json_d
 	exit 1
 }
 # 登录时 user_oidc 会取发现文档；这里先自检一次，取不到就装不上并写明原因（失败即停，别等用户登录才失败）。
-# 请求是发往 *.localhost 的：容器里 curl 会把它当 127.0.0.1，由同 netns 的 oidc-relay 转给核心。
-curl -fsS --noproxy '*' "$WONTON_OIDC_ISSUER/.well-known/openid-configuration" >/dev/null || {
+# *.localhost 下容器里的 curl 会把它当 127.0.0.1，由同 netns 的 oidc-relay 转给核心；别的域名走 Docker DNS。
+curl -fsS --max-time 10 --noproxy '*' "$WONTON_OIDC_ISSUER/.well-known/openid-configuration" >/dev/null || {
 	echo "取不到身份提供方发现文档：$WONTON_OIDC_ISSUER/.well-known/openid-configuration（容器内解析或访问失败）" >&2
 	exit 1
 }

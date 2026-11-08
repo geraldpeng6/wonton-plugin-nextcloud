@@ -29,26 +29,40 @@ oidc_login() { # <jar 文件>：走完 OIDC 链把 Nextcloud 会话写进会话 
 	# user_oidc 的回调 /apps/user_oidc/code 自己也是 302（换完会话跳回首页），不能一把 -L 跟到底——
 	# code/state 只出现在到达回调前的那个跳转地址上，所以逐跳跟；会话已有效时链里没有回调，
 	# user_oidc 把登录入口直接跳回首页，落到 Nextcloud 页面即视为已登录，幂等返回 0。
-	local jar="$1" origin url next code state
+	local jar="$1" origin url next code state resp
+	# 同一台机器可能同时跑两个 nextcloud 冒烟，响应体不能落在固定的 /tmp 名字上
+	resp="$(mktemp)"
 	origin="$(origin_of "$SMOKE_WEB_URL")"
+	# e2e 在身份项之前就会跑数据钩子，那时核心会话还没建立、jar 是空的（第一步就 401）。有令牌就照
+	# web_login 的做法自己登：先拿令牌换核心会话，再打开插件根让网关把会话换成应用的，之后照常走登录链。
+	# 都带 -b 才不会把 jar 覆盖没了；已登录时幂等；没有令牌（dev.sh probes）就跳过。
+	if [[ -n ${SMOKE_TOKEN:-} ]]; then
+		core="${SMOKE_BASE:-$(sed -E 's#^(https?://)[^./]+\.#\1#' <<<"$origin")}"
+		curl -sS --noproxy '*' --max-time 30 -o /dev/null -b "$jar" -c "$jar" \
+			--data-urlencode "token=$SMOKE_TOKEN" "$core/_wonton/login" ||
+			{ echo "核心登录失败"; rm -f "$resp"; return 1; }
+		curl -sS --noproxy '*' --max-time 60 -o /dev/null -L -b "$jar" -c "$jar" -H 'Accept: text/html' "$origin/" ||
+			{ echo "打开插件根失败"; rm -f "$resp"; return 1; }
+	fi
 	url="$origin/apps/user_oidc/login/1"
 	for _ in 1 2 3 4 5 6 7 8; do
 		[[ "$url" == *"/apps/user_oidc/code?"* ]] && break
-		next="$(curl -sS --noproxy '*' -o /tmp/nc-login-resp -b "$jar" -c "$jar" -w '%{redirect_url}' "$url")" ||
-			{ echo "请求失败：$url"; return 1; }
+		next="$(curl -sS --noproxy '*' -o "$resp" -b "$jar" -c "$jar" -w '%{redirect_url}' "$url")" ||
+			{ echo "请求失败：$url"; rm -f "$resp"; return 1; }
 		[[ -n "$next" ]] && url="$next"
 	done
 	if [[ "$url" == *"/apps/user_oidc/code?"* ]]; then
 		code="$(qparam "$url" code)"
 		state="$(qparam "$url" state)"
-		[[ -n "$code" && -n "$state" ]] || { echo "回调里没有 code/state：$url"; return 1; }
+		[[ -n "$code" && -n "$state" ]] || { echo "回调里没有 code/state：$url"; rm -f "$resp"; return 1; }
 		curl -sS --noproxy '*' -o /dev/null -b "$jar" -c "$jar" --fail-with-body \
 			--get --data-urlencode "code=$code" --data-urlencode "state=$state" \
-			"$origin/apps/user_oidc/code" || { echo "code 换会话失败"; return 1; }
+			"$origin/apps/user_oidc/code" || { echo "code 换会话失败"; rm -f "$resp"; return 1; }
 	else
-		grep -qi 'nextcloud' /tmp/nc-login-resp ||
-			{ echo "登录链没有产生回跳，也没落到 Nextcloud 页面：$(head -c 200 /tmp/nc-login-resp | tr '\n' ' ')"; return 1; }
+		grep -qi 'nextcloud' "$resp" ||
+			{ echo "登录链没有产生回跳，也没落到 Nextcloud 页面：$(head -c 200 "$resp" | tr '\n' ' ')"; rm -f "$resp"; return 1; }
 	fi
+	rm -f "$resp"
 }
 
 web_assert() { # 未登录 Nextcloud 时根路径 302 到登录页：登录页就是应用的真实页面
