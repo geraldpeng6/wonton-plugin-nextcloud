@@ -37,8 +37,16 @@ occ config:system:set allow_local_remote_servers --value true --type boolean
 occ config:app:set user_oidc allow_insecure_http --value 1
 
 # 密钥经环境变量传给 occ（--clientsecret-env），不进命令行参数。
+# 应用商店从这里经出口代理下 GitHub，实测会偶发 SSL EOF/超时（两次冒烟分别失败在 56 和 28）：重试三次，
+# 仍失败如实退出。
 if [ ! -d /var/www/html/custom_apps/user_oidc ]; then
-	occ app:install user_oidc
+	tries=0
+	until occ app:install user_oidc; do
+		tries=$((tries + 1))
+		[ "$tries" -lt 3 ] || { echo "应用商店装 user_oidc 失败 3 次" >&2; exit 1; }
+		echo "装 user_oidc 失败，重试（第 $tries 次）" >&2
+		sleep 5
+	done
 fi
 occ app:enable user_oidc
 
