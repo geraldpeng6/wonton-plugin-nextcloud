@@ -26,6 +26,8 @@
   user_oidc 首次登录按 OIDC 的 `sub`（= 云吞用户名）绑到这个账号，云吞用户即为管理员，没有第二个账号。
 - `webui.path` 指向 `/apps/user_oidc/login/1`，打开就进云吞登录，不落在 Nextcloud 自己的登录表单；
   user_oidc 按自增 ID 路由，setup 里断言提供方 ID 是 1。
+
+核心升级时容器会按新的签发方自动重建，不用重装；账号按已有的身份记录认回原账号，数据不动。
 - 容器里的 curl 和 PHP 把 `*.localhost` 直接当 127.0.0.1，不走 Docker DNS，所以 `oidc-relay` 和 Nextcloud
   共 netns，在 `127.0.0.1:<核心端口>` 上把请求转给核心；基础域名换成别的域名时容器里走 Docker DNS，
   转发不启动。应用因此听 8080 而不是 80，核心网页端口也用 8080 时 setup 会报出来，转发绑不上时也会报。

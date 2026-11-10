@@ -234,6 +234,8 @@ x-wonton:
 
       数据存在自己家里。本地管理员账号就是云吞用户名，密码由核心生成、在核心的插件密钥文件里，App 里看不到；
       身份提供方坏掉时用它直接登 Nextcloud。
+
+      核心升级后，插件容器会按新的签发方自动重建，打开照常，不用重装。
     en: |
       Files, photos, Markdown notes and WebDAV: your phone backs up photos automatically, your computer syncs
       folders with the desktop client, the browser is always at hand. Calendars, contacts, tasks and office
@@ -246,6 +248,8 @@ x-wonton:
       Everything stays at home. The local admin account is your Wonton username; the core generates its password
       and keeps it in the core's plugin secret file, the app never shows it — a fallback if the identity provider
       is down.
+
+      After a core upgrade the plugin's containers are rebuilt with the new issuer automatically; pages open as before, with nothing to reinstall.
   release_notes: { zh: 应用改用 8080，默认不再和核心网页端口抢 80；端口被占时转发写明原因并退出。转发的探针改成比对容器的网络沙箱并真的验活，应用单独重启后转发会自己重建回来；应用的健康检查也经转发确认登录提供方还能走。补 user_oidc 的许可和来源，README 补转发说明。, en: The app now listens on 8080 so it no longer competes with the core web port 80 by default and the relay exits with a stated reason when the port is taken. The relay probe now compares the container netns and really verifies the forward so the relay rebuilds itself after the app restarts alone; the app health check also confirms through the forward that the identity provider is reachable. Adds the user_oidc license and source and documents the relay in the README. }
   webui:
     service: nextcloud
