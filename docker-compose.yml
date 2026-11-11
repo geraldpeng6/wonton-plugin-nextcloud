@@ -213,10 +213,10 @@ x-wonton:
   id: com.nextcloud.nextcloud
   version: 0.2.0
   kind: app
-  title: { en: Nextcloud }
+  title: { zh: 网盘全家桶（Nextcloud）, en: All-in-One Cloud (Nextcloud) }
   description:
-    zh: 自己家的网盘：文件、相册和 Markdown 笔记都在手边，手机电脑都好用
-    en: "Your self-hosted cloud: files, photos and Markdown notes, at hand on phone and desktop"
+    zh: 功能最全的家庭网盘，像 iCloud：手机照片自动备份，电脑文件夹自动同步，网页里还能记笔记，日历、在线文档等可以从它的应用商店再加。适合想把文件、照片、笔记放在一处的人，也最占资源。
+    en: "The most complete home cloud, like iCloud: phone photos back up automatically, computer folders stay in sync, notes live in the browser, and calendars or online documents can be added from its own app store. For keeping files, photos and notes in one place — it also needs the most resources."
   icon: icon.svg
   notices: [NOTICE]
   screenshots: [screenshots/dashboard.png, screenshots/files.png, screenshots/photos.png]
@@ -230,8 +230,7 @@ x-wonton:
     en: [Cloud, Files, Sync, Photos]
   about:
     zh: |
-      文件、照片、Markdown 笔记和 WebDAV：手机自动备份照片，电脑用客户端同步文件夹，浏览器里随时翻。
-      日历、联系人、待办和在线办公不在镜像里，到 Nextcloud 的应用商店里点一下就有。
+      文件、照片、笔记一整套：手机自动备份照片，电脑装上 Nextcloud 的同步软件后文件夹自动保持一致，浏览器里随时翻。日历、联系人、待办和在线办公不在安装包里，到 Nextcloud 的应用商店里点一下就有。
 
       应用发的信（找回密码、分享邀请、活动通知）会出现在你的 Wonton 私聊里；分享给外部邮箱发不出去，
       Nextcloud 会报发送失败。
@@ -244,9 +243,7 @@ x-wonton:
 
       核心升级后，插件容器会按新的签发方自动重建，打开照常，不用重装。
     en: |
-      Files, photos, Markdown notes and WebDAV: your phone backs up photos automatically, your computer syncs
-      folders with the desktop client, the browser is always at hand. Calendars, contacts, tasks and office
-      suites are not in the image; one click in the Nextcloud app store adds them.
+      Files, photos and notes in one package: your phone backs up photos automatically, your computer keeps folders in sync with the Nextcloud desktop app, and the browser is always at hand. Calendars, contacts, tasks and office tools aren't included; add them with one click in the Nextcloud app store.
 
       Mail the app sends (password resets, share invitations, activity notifications) lands in your Wonton chat;
       sharing to outside email addresses fails with an error.
