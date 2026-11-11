@@ -120,3 +120,69 @@ data_check() { # 读回标记：文件内容一致，目录也在
 qparam() { # <url> <名字>：取查询参数
 	python3 -c 'import sys,urllib.parse;print((urllib.parse.parse_qs(urllib.parse.urlparse(sys.argv[1]).query).get(sys.argv[2]) or [""])[0])' "$1" "$2"
 }
+
+# ---------- 发信（notify，规范 0.11）----------
+nc_core() { # 核心容器：Mailpit 的别名和 API 密码都在它的网络上/数据目录里
+	docker ps --format '{{.Names}}' | grep -xE "wonton-${SMOKE_INSTANCE:-}--core" | head -1
+}
+
+nc_mailpit() { # <path>：调 Mailpit API（basic core:<密码>）。主路照核心自己的冒烟：在核心网络里
+	# 打 mailpit.wonton.internal:8025；兜底用应用容器的 wget（它的网络里也有这个别名）。
+	local core pw dd out webc
+	core="$(nc_core)" || return 1
+	if declare -F read_env >/dev/null; then dd="$(read_env WONTON_DATA_DIR)"; else dd="$(probes_setting WONTON_DATA_DIR)"; fi
+	pw="$(docker exec "$core" cat "$dd/core/mailpit/api-password" 2>/dev/null)"
+	[[ -n "${pw:-}" ]] || { echo "读不到 Mailpit API 密码（核心数据目录 core/mailpit/api-password）"; return 1; }
+	out="$(docker run --rm --network "container:$core" curlimages/curl:8.23.0 \
+		-s -u "core:$pw" "http://mailpit.wonton.internal:8025$1" 2>&1)"
+	if jq -e '.messages' <<<"$out" >/dev/null 2>&1 || [[ "$out" == "{"* ]]; then
+		printf '%s' "$out"; return 0
+	fi
+	webc="$(docker ps --format '{{.Names}}' | grep "$SMOKE_INSTANCE" | grep 'nextcloud' | head -1)"
+	[[ -n "$webc" ]] || { echo "Mailpit 主路没拿到 JSON：$(head -c 200 <<<"$out")"; return 1; }
+	docker exec "$webc" wget -qO- --header "Authorization: Basic $(printf 'core:%s' "$pw" | base64 | tr -d '\n')" \
+		"http://smtp.wonton.internal:8025$1" 2>&1
+}
+
+nc_mailpit_wait() { # <jq 过滤> [次数=20]：轮询 Mailpit 直到过滤命中
+	local filt="$1" n="${2:-20}" i out
+	for ((i = 0; i < n; i++)); do
+		out="$(nc_mailpit "/api/v1/messages?limit=100")" || { sleep 3; continue; }
+		jq -e "$filt" <<<"$out" >/dev/null 2>&1 && return 0
+		sleep 3
+	done
+	return 1
+}
+
+extra_check() { # 发信端到端：真实分享邮件进 Mailpit（From=内部发件地址、To=主人内部邮箱），被核心投进私聊后取走删除
+	local marker origin token file resp from to
+	origin="$(origin_of "$SMOKE_WEB_URL")"
+	to="${SMOKE_OWNER:-owner}@wonton.internal"
+	oidc_login "$SMOKE_JAR" || { echo "登录链没建立应用会话"; return 1; }
+	token="$(requesttoken "$SMOKE_JAR")" || { echo "取不到 CSRF 令牌"; return 1; }
+	# 上传一个小文件，用「通过邮件分享」发给主人的内部邮箱：应用的真实发信路径。
+	marker="$(head -c 12 /dev/urandom | base64 | tr -d '=+/' | head -c 16)"
+	file="wonton-mail-$marker.txt"
+	printf 'wonton e2e mail probe %s' "$marker" >"$(marker_file).mail"
+	curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		--fail-with-body -T "$(marker_file).mail" "$origin/remote.php/dav/files/${SMOKE_OWNER:-owner}/$file" >/dev/null ||
+		{ echo "传分享文件失败"; return 1; }
+	resp="$(curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		--fail-with-body --data-urlencode "path=/$file" --data-urlencode "shareType=4" \
+		--data-urlencode "shareWith=$to" \
+		"$origin/ocs/v2.php/apps/files_sharing/api/v1/shares")" ||
+		{ echo "邮件分享请求失败：$(head -c 200 <<<"$resp")"; return 1; }
+	grep -q '<code>200</code>\|"code":200' <<<"$resp" ||
+		{ echo "邮件分享没成功：$(head -c 200 <<<"$resp")"; return 1; }
+	# 信进内部邮箱：From 是 WONTON_MAIL_FROM（com.nextcloud.nextcloud@plugins.wonton.internal）。
+	from='com\.nextcloud\.nextcloud@plugins\.wonton\.internal'
+	nc_mailpit_wait "$(jq -n --arg to "$to" --arg fre "$from" \
+		'.messages | any(.From.Address | test($fre)) and any(.To[].Address == $to)')" 20 ||
+		{ echo "分享邮件 60 秒没进 Mailpit：$(nc_mailpit '/api/v1/messages?limit=5' | head -c 300)"; return 1; }
+	echo "分享邮件已进内部邮箱（To=$to）"
+	# 核心投进收件人私聊后把信从 Mailpit 删掉：信箱里没有这封信 = 已投递。
+	nc_mailpit_wait "$(jq -n --arg to "$to" \
+		'(.messages | map(select(.To[].Address == $to)) | length) == 0')" 20 ||
+		{ echo "分享邮件一直留在 Mailpit：核心没把它投进主人私聊（投完才会删）"; return 1; }
+	echo "核心已把信投进主人的 Wonton 私聊（Mailpit 里已删除）"
+}
