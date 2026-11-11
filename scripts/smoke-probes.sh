@@ -120,3 +120,60 @@ data_check() { # 读回标记：文件内容一致，目录也在
 qparam() { # <url> <名字>：取查询参数
 	python3 -c 'import sys,urllib.parse;print((urllib.parse.parse_qs(urllib.parse.urlparse(sys.argv[1]).query).get(sys.argv[2]) or [""])[0])' "$1" "$2"
 }
+
+# ---------- 发信（notify，规范 0.11）----------
+nc_core() { # 核心容器：Mailpit 的别名、API 密码和 Matrix 记录都在它的网络上/数据目录里
+	docker ps --format '{{.Names}}' | grep -xE "wonton-${SMOKE_INSTANCE:-}--core" | head -1
+}
+
+nc_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 probes_setting）
+	if declare -F read_env >/dev/null; then read_env WONTON_DATA_DIR; else probes_setting WONTON_DATA_DIR; fi
+}
+
+nc_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字。用套件 probes.sh 的
+	# probes_owner_room_wait（随 main 的 kit 同步修），在独立进程里跑，套件的 pass/fail 不盖进冒烟自己的 shell。
+	# 文字里带每次随机的标记，旧信不会误配；等待开始即计时，信到多快都等得到（无轮询竞态）。
+	local core dd pdir
+	core="$(nc_core)" || return 1
+	dd="$(nc_dd)"
+	pdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	# shellcheck disable=SC2016 # 单引号里是子进程 bash 的变量，$1/$2/$3 是 bash -c 的位置参数
+	env SMOKE_CORE="$core" SMOKE_DATA_DIR="$dd" SMOKE_OWNER="${SMOKE_OWNER:-owner}" \
+		bash -c 'date() { [[ "${1:-}" == "+%s" ]] && command date -d "@$(( $(command date +%s) - 300 ))" +%s || command date "\$@"; }; source "$1/lib.sh" && source "$1/probes.sh" && probes_owner_room_wait "$2" "$3"' \
+		_ "$pdir" "$1" "$2"
+}
+
+extra_check() { # 发信端到端：用应用的「通过邮件分享」真发一封给主人内部邮箱（应用自己的发信路径），
+	# 然后等核心把它投进主人的「Wonton」私聊（读通知房的消息，投递的最终证据）。
+	local marker origin token file resp to sid wp
+	origin="$(origin_of "$SMOKE_WEB_URL")"
+	to="${SMOKE_OWNER:-owner}@wonton.internal"
+	oidc_login "$SMOKE_JAR" || { echo "登录链没建立应用会话"; return 1; }
+	token="$(requesttoken "$SMOKE_JAR")" || { echo "取不到 CSRF 令牌"; return 1; }
+	# 上传一个小文件，用「通过邮件分享」发给主人的内部邮箱；创建后调 send-email 触发发信
+	# （Nextcloud 35 建 share 不会自动发信，网页和这里都要单独调一次）。
+	marker="$(head -c 12 /dev/urandom | base64 | tr -d '=+/' | head -c 16)"
+	file="wonton-mail-$marker.txt"
+	printf 'wonton e2e mail probe %s' "$marker" >"$(marker_file).mail"
+	curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		--fail-with-body -T "$(marker_file).mail" "$origin/remote.php/dav/files/${SMOKE_OWNER:-owner}/$file" >/dev/null ||
+		{ echo "传分享文件失败"; return 1; }
+	resp="$(curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		--fail-with-body --data-urlencode "path=/$file" --data-urlencode "shareType=4" \
+		--data-urlencode "shareWith=$to" \
+		"$origin/ocs/v2.php/apps/files_sharing/api/v1/shares")" ||
+		{ echo "邮件分享请求失败：$(head -c 200 <<<"$resp")"; return 1; }
+	grep -q '<statuscode>200</statuscode>\|"statuscode":200' <<<"$resp" ||
+		{ echo "邮件分享没成功：$(head -c 200 <<<"$resp")"; return 1; }
+	sid="$(grep -oE '<id>[0-9]+</id>' <<<"$resp" | head -1 | tr -dc 0-9)"
+	[[ -n "$sid" ]] || { echo "分享响应里没有 id：$(head -c 200 <<<"$resp")"; return 1; }
+	# 等待先挂后台再触发（模板的用法）：信进私聊是秒级投递，先等后发才等得到。
+	nc_room_wait 120 "$marker" & wp=$!
+	resp="$(curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		-X POST "$origin/ocs/v2.php/apps/files_sharing/api/v1/shares/$sid/send-email")" ||
+		{ kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; echo "触发发信失败：$(head -c 200 <<<"$resp")"; return 1; }
+	# 核心把信投进主人的「Wonton」私聊：房里出现这一封（标记在文件名/正文里）。
+	wait "$wp" ||
+		{ echo "分享邮件 120 秒没出现在主人的 Wonton 私聊（房里没这封信）"; return 1; }
+	echo "分享邮件已进主人的 Wonton 私聊（Nextcloud：owner shared $file with you）"
+}

@@ -185,6 +185,10 @@ services:
       WONTON_OIDC_ISSUER: ${WONTON_OIDC_ISSUER}
       WONTON_OIDC_CLIENT_ID: ${WONTON_OIDC_CLIENT_ID}
       WONTON_OIDC_CLIENT_SECRET: ${WONTON_OIDC_CLIENT_SECRET}
+      # 发信（notify）：发件地址按 @ 拆成本地部分和域名写进 config.php（compose 拆不了，见 setup.sh）。
+      WONTON_SMTP_HOST: ${WONTON_SMTP_HOST}
+      WONTON_SMTP_PORT: ${WONTON_SMTP_PORT}
+      WONTON_MAIL_FROM: ${WONTON_MAIL_FROM}
     volumes:
       # occ 和它要改的 config.php 在数据卷里（镜像自带的 /var/www/html 是空的，入口脚本只在跑
       # apache/php-fpm 时才把代码同步进去；command 覆盖成 setup.sh 后必须自己挂卷）。
@@ -205,9 +209,9 @@ configs:
     file: ./oidc-relay/probe.sh
 
 x-wonton:
-  spec: "0.8"
+  spec: "0.11"
   id: com.nextcloud.nextcloud
-  version: 0.1.1
+  version: 0.2.0
   kind: app
   title: { en: Nextcloud }
   description:
@@ -229,6 +233,9 @@ x-wonton:
       文件、照片、Markdown 笔记和 WebDAV：手机自动备份照片，电脑用客户端同步文件夹，浏览器里随时翻。
       日历、联系人、待办和在线办公不在镜像里，到 Nextcloud 的应用商店里点一下就有。
 
+      应用发的信（找回密码、分享邀请、活动通知）会出现在你的 Wonton 私聊里；分享给外部邮箱发不出去，
+      Nextcloud 会报发送失败。
+
       打开就用：云吞的身份进来就是管理员，不用再注册或登录一次。首次启动会从应用商店装官方的 user_oidc
       应用，之后接云吞登录，所以要出网。
 
@@ -241,6 +248,9 @@ x-wonton:
       folders with the desktop client, the browser is always at hand. Calendars, contacts, tasks and office
       suites are not in the image; one click in the Nextcloud app store adds them.
 
+      Mail the app sends (password resets, share invitations, activity notifications) lands in your Wonton chat;
+      sharing to outside email addresses fails with an error.
+
       Opening the page is enough: your Wonton identity signs in as the admin, no second account or login. The
       first start installs the official user_oidc app from the app store to hook up Wonton sign-in, so it needs
       internet access.
@@ -250,7 +260,7 @@ x-wonton:
       is down.
 
       After a core upgrade the plugin's containers are rebuilt with the new issuer automatically; pages open as before, with nothing to reinstall.
-  release_notes: { zh: 应用改用 8080，默认不再和核心网页端口抢 80；端口被占时转发写明原因并退出。转发的探针改成比对容器的网络沙箱并真的验活，应用单独重启后转发会自己重建回来；应用的健康检查也经转发确认登录提供方还能走。补 user_oidc 的许可和来源，README 补转发说明。, en: The app now listens on 8080 so it no longer competes with the core web port 80 by default and the relay exits with a stated reason when the port is taken. The relay probe now compares the container netns and really verifies the forward so the relay rebuilds itself after the app restarts alone; the app health check also confirms through the forward that the identity provider is reachable. Adds the user_oidc license and source and documents the relay in the README. }
+  release_notes: { zh: 接上云吞的内部邮箱：找回密码、分享邀请、活动通知这些信会出现在你的 Wonton 私聊里；分享给外部邮箱发不出去，Nextcloud 会报发送失败。, en: "Connects to the Wonton internal mailbox: password resets, share invitations and activity notifications land in your Wonton chat; sharing to outside email addresses fails with an error." }
   webui:
     service: nextcloud
     port: 8080
@@ -277,6 +287,8 @@ x-wonton:
     - network.egress
     # 用云吞用户名创建 Nextcloud 的管理员账号（官方镜像 NEXTCLOUD_ADMIN_USER 的值）。
     - owner.identity
+    # 应用发的信（找回密码、分享邀请、活动通知）经核心的内部邮箱 SMTP 转进收件人的 Wonton 私聊。
+    - notify
   # 上游文档（admin manual 的 system requirements）写的最低内存是 512M；插件含 MariaDB 和 Valkey，
   # 取 1G。镜像支持 amd64 和 arm64（Docker Hub 清单列表）。
   requirements:

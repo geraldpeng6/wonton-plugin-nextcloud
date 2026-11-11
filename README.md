@@ -13,7 +13,7 @@
 | 路径 | 内容 |
 | --- | --- |
 | `docker-compose.yml` | 插件清单和五个服务（nextcloud、db、valkey、cron、oidc-relay）加一次性 setup |
-| `setup/nextcloud-setup.sh` | 一次性收尾：反代设置、装 user_oidc、登记身份提供方（幂等） |
+| `setup/nextcloud-setup.sh` | 一次性收尾：反代设置、装 user_oidc、登记身份提供方、配发信（幂等） |
 | `healthcheck/nextcloud-health.sh` | Nextcloud 的健康检查：status.php 装完且数据库连得上 |
 | `apache/ports.conf` | 镜像同名文件的副本，只把应用端口改成 8080 |
 | `oidc-relay/probe.sh` | 转发的健康检查和自愈探针：经转发取一次核心的答复 |
@@ -37,6 +37,15 @@
 - 插件申请了出网（首次启动装 user_oidc 用），内部服务按规范用核心生成的密钥加了密码。
 - 开了 `allow_local_remote_servers`：签发方解析成回环（`*.localhost` 由转发接住）或插件网络里的内网地址，
   Nextcloud 默认不让 HTTP 客户端请求本地地址，不开登录会报“无法连接身份提供方”。
+
+## 发信
+
+- 应用发的信（找回密码、分享邀请、活动通知）交给核心的内部邮箱 SMTP（`notify` 权限注入的 `WONTON_SMTP_*`），
+  不认证、不加密，所以没配 SMTP 用户名密码；核心把信转进收件人的“Wonton”私聊。
+- 发件地址用 `WONTON_MAIL_FROM`。Nextcloud 把发件人拆成 mail_from_address（本地部分）加 mail_domain（域名）
+  两段存，compose 拆不了 `@`，由 setup 用 occ 写进 config.php——因此不走官方镜像的
+  `SMTP_*`/`MAIL_FROM_*` 环境变量（那套要求三个变量一起给，域名拆不出来）。
+- 分享给外部邮箱（“通过邮件分享”）发不到外面，Nextcloud 会报发送失败。
 
 ## 图标
 
