@@ -144,18 +144,29 @@ nc_mailpit() { # <path>：调 Mailpit API（basic core:<密码>）。主路照�
 		"http://smtp.wonton.internal:8025$1" 2>&1
 }
 
-nc_mailpit_wait() { # <jq 过滤> [次数=20]：轮询 Mailpit 直到过滤命中
-	local filt="$1" n="${2:-20}" i out
+nc_mailpit_wait() { # <from> <to> [次数=20]：等一封 From/To 对上的信进 Mailpit
+	local from="$1" to="$2" n="${3:-20}" i out
 	for ((i = 0; i < n; i++)); do
 		out="$(nc_mailpit "/api/v1/messages?limit=100")" || { sleep 3; continue; }
-		jq -e "$filt" <<<"$out" >/dev/null 2>&1 && return 0
+		jq -e --arg f "$from" --arg t "$to" \
+			'.messages | any(.From.Address == $f and any(.To[]; .Address == $t))' <<<"$out" >/dev/null 2>&1 && return 0
+		sleep 3
+	done
+	return 1
+}
+
+nc_mailpit_wait_gone() { # <to> [次数=20]：等收件人的信从 Mailpit 里消失（核心投进私聊后会把信删掉）
+	local to="$1" n="${2:-20}" i out
+	for ((i = 0; i < n; i++)); do
+		out="$(nc_mailpit "/api/v1/messages?limit=100")" || { sleep 3; continue; }
+		jq -e --arg t "$to" '(.messages | map(select(.To[].Address == $t)) | length) == 0' <<<"$out" >/dev/null 2>&1 && return 0
 		sleep 3
 	done
 	return 1
 }
 
 extra_check() { # 发信端到端：真实分享邮件进 Mailpit（From=内部发件地址、To=主人内部邮箱），被核心投进私聊后取走删除
-	local marker origin token file resp from to
+	local marker origin token file resp to
 	origin="$(origin_of "$SMOKE_WEB_URL")"
 	to="${SMOKE_OWNER:-owner}@wonton.internal"
 	oidc_login "$SMOKE_JAR" || { echo "登录链没建立应用会话"; return 1; }
@@ -175,14 +186,11 @@ extra_check() { # 发信端到端：真实分享邮件进 Mailpit（From=内部�
 	grep -q '<code>200</code>\|"code":200' <<<"$resp" ||
 		{ echo "邮件分享没成功：$(head -c 200 <<<"$resp")"; return 1; }
 	# 信进内部邮箱：From 是 WONTON_MAIL_FROM（com.nextcloud.nextcloud@plugins.wonton.internal）。
-	from='com\.nextcloud\.nextcloud@plugins\.wonton\.internal'
-	nc_mailpit_wait "$(jq -n --arg to "$to" --arg fre "$from" \
-		'.messages | any(.From.Address | test($fre)) and any(.To[].Address == $to)')" 20 ||
+	nc_mailpit_wait "com.nextcloud.nextcloud@plugins.wonton.internal" "$to" 20 ||
 		{ echo "分享邮件 60 秒没进 Mailpit：$(nc_mailpit '/api/v1/messages?limit=5' | head -c 300)"; return 1; }
 	echo "分享邮件已进内部邮箱（To=$to）"
 	# 核心投进收件人私聊后把信从 Mailpit 删掉：信箱里没有这封信 = 已投递。
-	nc_mailpit_wait "$(jq -n --arg to "$to" \
-		'(.messages | map(select(.To[].Address == $to)) | length) == 0')" 20 ||
+	nc_mailpit_wait_gone "$to" 20 ||
 		{ echo "分享邮件一直留在 Mailpit：核心没把它投进主人私聊（投完才会删）"; return 1; }
 	echo "核心已把信投进主人的 Wonton 私聊（Mailpit 里已删除）"
 }
