@@ -122,56 +122,64 @@ qparam() { # <url> <名字>：取查询参数
 }
 
 # ---------- 发信（notify，规范 0.11）----------
-nc_core() { # 核心容器：Mailpit 的别名和 API 密码都在它的网络上/数据目录里
+nc_core() { # 核心容器：Mailpit 的别名、API 密码和 Matrix 记录都在它的网络上/数据目录里
 	docker ps --format '{{.Names}}' | grep -xE "wonton-${SMOKE_INSTANCE:-}--core" | head -1
 }
 
-nc_mailpit() { # <path>：调 Mailpit API（basic core:<密码>）。主路照核心自己的冒烟：在核心网络里
-	# 打 mailpit.wonton.internal:8025；兜底用应用容器的 wget（它的网络里也有这个别名）。
-	local core pw dd out webc
+nc_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 probes_setting）
+	if declare -F read_env >/dev/null; then read_env WONTON_DATA_DIR; else probes_setting WONTON_DATA_DIR; fi
+}
+
+nc_room_query() { # 用主人令牌读「Wonton」通知房最近消息（信被核心投进私聊的最终证据）。
+	# 主人令牌照核心自己的做法：管理令牌走 Tuwunel 的 impersonation 登录；都在核心容器里拿。
+	local core dd room admin srv otok
 	core="$(nc_core)" || return 1
-	if declare -F read_env >/dev/null; then dd="$(read_env WONTON_DATA_DIR)"; else dd="$(probes_setting WONTON_DATA_DIR)"; fi
-	pw="$(docker exec "$core" cat "$dd/core/mailpit/api-password" 2>/dev/null)"
-	[[ -n "${pw:-}" ]] || { echo "读不到 Mailpit API 密码（核心数据目录 core/mailpit/api-password）"; return 1; }
-	out="$(docker run --rm --network "container:$core" curlimages/curl:8.23.0 \
-		-s -u "core:$pw" "http://mailpit.wonton.internal:8025$1" 2>&1)"
-	if jq -e '.messages' <<<"$out" >/dev/null 2>&1 || [[ "$out" == "{"* ]]; then
-		printf '%s' "$out"; return 0
-	fi
-	webc="$(docker ps --format '{{.Names}}' | grep "$SMOKE_INSTANCE" | grep 'nextcloud' | head -1)"
-	[[ -n "$webc" ]] || { echo "Mailpit 主路没拿到 JSON：$(head -c 200 <<<"$out")"; return 1; }
-	docker exec "$webc" wget -qO- --header "Authorization: Basic $(printf 'core:%s' "$pw" | base64 | tr -d '\n')" \
-		"http://smtp.wonton.internal:8025$1" 2>&1
+	dd="$(nc_dd)"
+	room="$(docker exec "$core" cat "$dd/core/matrix-notice-room")" ||
+		{ echo "读不到通知房记录（$dd/core/matrix-notice-room）"; return 1; }
+	admin="$(docker exec "$core" cat "$dd/core/matrix-admin-token")" ||
+		{ echo "读不到 Matrix 管理令牌"; return 1; }
+	srv="$(docker exec "$core" cat "$dd/../secrets/matrix-server-name")" ||
+		{ echo "读不到 Matrix 服务器名"; return 1; }
+	otok="$(docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
+		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $admin" -H 'Content-Type: application/json' -d '{}' \
+		"http://tuwunel.wonton.internal:8008/_synapse/admin/v1/users/@owner:$srv/login" | jq -er .access_token)" ||
+		{ echo "拿不到主人的 Matrix 令牌"; return 1; }
+	docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
+		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $otok" \
+		"http://tuwunel.wonton.internal:8008/_matrix/client/v3/rooms/$room/messages?dir=b&limit=20"
 }
 
-nc_mailpit_wait() { # <from> <to> [次数=20]：等一封 From/To 对上的信进 Mailpit
-	local from="$1" to="$2" n="${3:-20}" i out
+nc_room_newest_ts() { # <前缀>：通知房里该插件最近一条邮件消息的 origin_server_ts（没有则 0）
+	local out
+	out="$(nc_room_query)" || { echo 0; return 0; }
+	jq -r --arg p "$1" '[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p))) | .origin_server_ts] | max // 0' <<<"$out" 2>/dev/null || echo 0
+}
+
+nc_room_wait() { # <前缀> <标记> <起始 ts> [次数=40]：等通知房里出现这条插件发的新邮件消息（投进私聊后一直都在）
+	local prefix="$1" marker="$2" since="$3" n="${4:-40}" i out hits
 	for ((i = 0; i < n; i++)); do
-		out="$(nc_mailpit "/api/v1/messages?limit=100")" || { sleep 3; continue; }
-		jq -e --arg f "$from" --arg t "$to" \
-			'.messages | any(.From.Address == $f and any(.To[]; .Address == $t))' <<<"$out" >/dev/null 2>&1 && return 0
-		sleep 3
+		out="$(nc_room_query)" || { sleep 2; continue; }
+		hits="$(jq -r --arg p "$prefix" --arg m "$marker" --argjson s "$since" '
+			[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p)) and .origin_server_ts > $s)
+			 | select($m == "" or (.content.body | contains($m)))] | length' <<<"$out" 2>/dev/null || echo 0)"
+		[[ "${hits:-0}" -ge 1 ]] && return 0
+		sleep 2
 	done
 	return 1
 }
 
-nc_mailpit_wait_gone() { # <to> [次数=20]：等收件人的信从 Mailpit 里消失（核心投进私聊后会把信删掉）
-	local to="$1" n="${2:-20}" i out
-	for ((i = 0; i < n; i++)); do
-		out="$(nc_mailpit "/api/v1/messages?limit=100")" || { sleep 3; continue; }
-		jq -e --arg t "$to" '(.messages | map(select(.To[].Address == $t)) | length) == 0' <<<"$out" >/dev/null 2>&1 && return 0
-		sleep 3
-	done
-	return 1
-}
-
-extra_check() { # 发信端到端：真实分享邮件进 Mailpit（From=内部发件地址、To=主人内部邮箱），被核心投进私聊后取走删除
-	local marker origin token file resp to
+extra_check() { # 发信端到端：用应用的「通过邮件分享」真发一封给主人内部邮箱（应用自己的发信路径），
+	# 然后等核心把它投进主人的「Wonton」私聊（直接读通知房的消息，投递的最终证据）。
+	local marker origin token file resp to sid before
 	origin="$(origin_of "$SMOKE_WEB_URL")"
 	to="${SMOKE_OWNER:-owner}@wonton.internal"
 	oidc_login "$SMOKE_JAR" || { echo "登录链没建立应用会话"; return 1; }
 	token="$(requesttoken "$SMOKE_JAR")" || { echo "取不到 CSRF 令牌"; return 1; }
-	# 上传一个小文件，用「通过邮件分享」发给主人的内部邮箱：应用的真实发信路径。
+	# 记下触发前该插件最近一封邮件消息的时间，之后只认更新的（房里已有旧邮件时不会误报）。
+	before="$(nc_room_newest_ts "Nextcloud：")"
+	# 上传一个小文件，用「通过邮件分享」发给主人的内部邮箱；创建后调 send-email 触发发信
+	# （Nextcloud 35 建 share 不会自动发信，网页和这里都要单独调一次）。
 	marker="$(head -c 12 /dev/urandom | base64 | tr -d '=+/' | head -c 16)"
 	file="wonton-mail-$marker.txt"
 	printf 'wonton e2e mail probe %s' "$marker" >"$(marker_file).mail"
@@ -185,12 +193,13 @@ extra_check() { # 发信端到端：真实分享邮件进 Mailpit（From=内部�
 		{ echo "邮件分享请求失败：$(head -c 200 <<<"$resp")"; return 1; }
 	grep -q '<statuscode>200</statuscode>\|"statuscode":200' <<<"$resp" ||
 		{ echo "邮件分享没成功：$(head -c 200 <<<"$resp")"; return 1; }
-	# 信进内部邮箱：From 是 WONTON_MAIL_FROM（com.nextcloud.nextcloud@plugins.wonton.internal）。
-	nc_mailpit_wait "com.nextcloud.nextcloud@plugins.wonton.internal" "$to" 20 ||
-		{ echo "分享邮件 60 秒没进 Mailpit：$(nc_mailpit '/api/v1/messages?limit=5' | head -c 300)"; return 1; }
-	echo "分享邮件已进内部邮箱（To=$to）"
-	# 核心投进收件人私聊后把信从 Mailpit 删掉：信箱里没有这封信 = 已投递。
-	nc_mailpit_wait_gone "$to" 20 ||
-		{ echo "分享邮件一直留在 Mailpit：核心没把它投进主人私聊（投完才会删）"; return 1; }
-	echo "核心已把信投进主人的 Wonton 私聊（Mailpit 里已删除）"
+	sid="$(grep -oE '<id>[0-9]+</id>' <<<"$resp" | head -1 | tr -dc 0-9)"
+	[[ -n "$sid" ]] || { echo "分享响应里没有 id：$(head -c 200 <<<"$resp")"; return 1; }
+	resp="$(curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
+		-X POST "$origin/ocs/v2.php/apps/files_sharing/api/v1/shares/$sid/send-email")" ||
+		{ echo "触发发信失败：$(head -c 200 <<<"$resp")"; return 1; }
+	# 核心把信投进主人的「Wonton」私聊：房里出现这一封（标记在文件名/正文里），投递快，轮询等它落定。
+	nc_room_wait "Nextcloud：" "$marker" "$before" 40 ||
+		{ echo "分享邮件 80 秒没出现在主人的 Wonton 私聊：$(nc_room_query | head -c 300)"; return 1; }
+	echo "分享邮件已进主人的 Wonton 私聊（Nextcloud：owner shared $file with you）"
 }
