@@ -133,14 +133,14 @@ nc_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 prob
 nc_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字。用套件 probes.sh 的
 	# probes_owner_room_wait（随 main 的 kit 同步修），在独立进程里跑，套件的 pass/fail 不盖进冒烟自己的 shell。
 	# 文字里带每次随机的标记，旧信不会误配；等待开始即计时，信到多快都等得到（无轮询竞态）。
-	local core dd dir
+	local core dd pdir
 	core="$(nc_core)" || return 1
 	dd="$(nc_dd)"
-	dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	pdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	# shellcheck disable=SC2016 # 单引号里是子进程 bash 的变量，$1/$2/$3 是 bash -c 的位置参数
 	env SMOKE_CORE="$core" SMOKE_DATA_DIR="$dd" SMOKE_OWNER="${SMOKE_OWNER:-owner}" \
 		bash -c 'source "$1/lib.sh" && source "$1/probes.sh" && probes_owner_room_wait "$2" "$3"' \
-		_ "$dir" "$1" "$2"
+		_ "$pdir" "$1" "$2"
 }
 
 extra_check() { # 发信端到端：用应用的「通过邮件分享」真发一封给主人内部邮箱（应用自己的发信路径），
