@@ -183,7 +183,7 @@ extra_check() { # 发信端到端：真实分享邮件进 Mailpit（From=内部�
 		--data-urlencode "shareWith=$to" \
 		"$origin/ocs/v2.php/apps/files_sharing/api/v1/shares")" ||
 		{ echo "邮件分享请求失败：$(head -c 200 <<<"$resp")"; return 1; }
-	grep -q '<code>200</code>\|"code":200' <<<"$resp" ||
+	grep -q '<statuscode>200</statuscode>\|"statuscode":200' <<<"$resp" ||
 		{ echo "邮件分享没成功：$(head -c 200 <<<"$resp")"; return 1; }
 	# 信进内部邮箱：From 是 WONTON_MAIL_FROM（com.nextcloud.nextcloud@plugins.wonton.internal）。
 	nc_mailpit_wait "com.nextcloud.nextcloud@plugins.wonton.internal" "$to" 20 ||
