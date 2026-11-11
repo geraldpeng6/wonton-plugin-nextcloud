@@ -130,54 +130,25 @@ nc_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 prob
 	if declare -F read_env >/dev/null; then read_env WONTON_DATA_DIR; else probes_setting WONTON_DATA_DIR; fi
 }
 
-nc_room_query() { # 用主人令牌读「Wonton」通知房最近消息（信被核心投进私聊的最终证据）。
-	# 主人令牌照核心自己的做法：管理令牌走 Tuwunel 的 impersonation 登录；都在核心容器里拿。
-	local core dd room admin srv otok
+nc_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字。用套件 probes.sh 的
+	# probes_owner_room_wait（随 main 的 kit 同步修），在独立进程里跑，套件的 pass/fail 不盖进冒烟自己的 shell。
+	# 文字里带每次随机的标记，旧信不会误配；等待开始即计时，信到多快都等得到（无轮询竞态）。
+	local core dd dir
 	core="$(nc_core)" || return 1
 	dd="$(nc_dd)"
-	room="$(docker exec "$core" cat "$dd/core/matrix-notice-room")" ||
-		{ echo "读不到通知房记录（$dd/core/matrix-notice-room）"; return 1; }
-	admin="$(docker exec "$core" cat "$dd/core/matrix-admin-token")" ||
-		{ echo "读不到 Matrix 管理令牌"; return 1; }
-	srv="$(docker exec "$core" cat "$dd/../secrets/matrix-server-name")" ||
-		{ echo "读不到 Matrix 服务器名"; return 1; }
-	otok="$(docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
-		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $admin" -H 'Content-Type: application/json' -d '{}' \
-		"http://tuwunel.wonton.internal:8008/_synapse/admin/v1/users/@owner:$srv/login" | jq -er .access_token)" ||
-		{ echo "拿不到主人的 Matrix 令牌"; return 1; }
-	docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
-		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $otok" \
-		"http://tuwunel.wonton.internal:8008/_matrix/client/v3/rooms/$room/messages?dir=b&limit=20"
-}
-
-nc_room_newest_ts() { # <前缀>：通知房里该插件最近一条邮件消息的 origin_server_ts（没有则 0）
-	local out
-	out="$(nc_room_query)" || { echo 0; return 0; }
-	jq -r --arg p "$1" '[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p))) | .origin_server_ts] | max // 0' <<<"$out" 2>/dev/null || echo 0
-}
-
-nc_room_wait() { # <前缀> <标记> <起始 ts> [次数=40]：等通知房里出现这条插件发的新邮件消息（投进私聊后一直都在）
-	local prefix="$1" marker="$2" since="$3" n="${4:-40}" i out hits
-	for ((i = 0; i < n; i++)); do
-		out="$(nc_room_query)" || { sleep 2; continue; }
-		hits="$(jq -r --arg p "$prefix" --arg m "$marker" --argjson s "$since" '
-			[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p)) and .origin_server_ts > $s)
-			 | select($m == "" or (.content.body | contains($m)))] | length' <<<"$out" 2>/dev/null || echo 0)"
-		[[ "${hits:-0}" -ge 1 ]] && return 0
-		sleep 2
-	done
-	return 1
+	dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	env SMOKE_CORE="$core" SMOKE_DATA_DIR="$dd" SMOKE_OWNER="${SMOKE_OWNER:-owner}" \
+		bash -c 'source "$1/lib.sh" && source "$1/probes.sh" && probes_owner_room_wait "$2" "$3"' \
+		_ "$dir" "$1" "$2"
 }
 
 extra_check() { # 发信端到端：用应用的「通过邮件分享」真发一封给主人内部邮箱（应用自己的发信路径），
-	# 然后等核心把它投进主人的「Wonton」私聊（直接读通知房的消息，投递的最终证据）。
-	local marker origin token file resp to sid before
+	# 然后等核心把它投进主人的「Wonton」私聊（读通知房的消息，投递的最终证据）。
+	local marker origin token file resp to sid wp
 	origin="$(origin_of "$SMOKE_WEB_URL")"
 	to="${SMOKE_OWNER:-owner}@wonton.internal"
 	oidc_login "$SMOKE_JAR" || { echo "登录链没建立应用会话"; return 1; }
 	token="$(requesttoken "$SMOKE_JAR")" || { echo "取不到 CSRF 令牌"; return 1; }
-	# 记下触发前该插件最近一封邮件消息的时间，之后只认更新的（房里已有旧邮件时不会误报）。
-	before="$(nc_room_newest_ts "Nextcloud：")"
 	# 上传一个小文件，用「通过邮件分享」发给主人的内部邮箱；创建后调 send-email 触发发信
 	# （Nextcloud 35 建 share 不会自动发信，网页和这里都要单独调一次）。
 	marker="$(head -c 12 /dev/urandom | base64 | tr -d '=+/' | head -c 16)"
@@ -195,11 +166,13 @@ extra_check() { # 发信端到端：用应用的「通过邮件分享」真发�
 		{ echo "邮件分享没成功：$(head -c 200 <<<"$resp")"; return 1; }
 	sid="$(grep -oE '<id>[0-9]+</id>' <<<"$resp" | head -1 | tr -dc 0-9)"
 	[[ -n "$sid" ]] || { echo "分享响应里没有 id：$(head -c 200 <<<"$resp")"; return 1; }
+	# 等待先挂后台再触发（模板的用法）：信进私聊是秒级投递，先等后发才等得到。
+	nc_room_wait 120 "$marker" & wp=$!
 	resp="$(curl -sS --noproxy '*' -b "$SMOKE_JAR" -H "requesttoken: $token" -H 'OCS-APIRequest: true' \
 		-X POST "$origin/ocs/v2.php/apps/files_sharing/api/v1/shares/$sid/send-email")" ||
-		{ echo "触发发信失败：$(head -c 200 <<<"$resp")"; return 1; }
-	# 核心把信投进主人的「Wonton」私聊：房里出现这一封（标记在文件名/正文里），投递快，轮询等它落定。
-	nc_room_wait "Nextcloud：" "$marker" "$before" 40 ||
-		{ echo "分享邮件 80 秒没出现在主人的 Wonton 私聊：$(nc_room_query | head -c 300)"; return 1; }
+		{ kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; echo "触发发信失败：$(head -c 200 <<<"$resp")"; return 1; }
+	# 核心把信投进主人的「Wonton」私聊：房里出现这一封（标记在文件名/正文里）。
+	wait "$wp" ||
+		{ echo "分享邮件 120 秒没出现在主人的 Wonton 私聊（房里没这封信）"; return 1; }
 	echo "分享邮件已进主人的 Wonton 私聊（Nextcloud：owner shared $file with you）"
 }
