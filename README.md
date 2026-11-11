@@ -7,8 +7,8 @@
 登录经云吞的身份提供方（Ory Hydra）：首次启动从应用商店装官方 [user_oidc](https://apps.nextcloud.com/apps/user_oidc)
 应用并登记身份源，打开插件就是自己的管理员账号，不用再登录一次。
 
-开发流程见[插件开发指南](https://github.com/geraldpeng6/wonton-docs/blob/main/develop.md)，清单和规则见
-[插件规范](https://github.com/geraldpeng6/wonton-docs/blob/main/plugin-spec.md)。
+开发流程见[插件开发指南](https://github.com/wontonapp/wonton-docs/blob/main/develop.md)，清单和规则见
+[插件规范](https://github.com/wontonapp/wonton-docs/blob/main/plugin-spec.md)。
 
 | 路径 | 内容 |
 | --- | --- |
