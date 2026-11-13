@@ -42,7 +42,7 @@ services:
     restart: unless-stopped
 
   nextcloud:
-    image: nextcloud:35.0.2@sha256:d88929dc8386420b8963f86cabb667fdaf733eef9dcf8fc98e226801a32c023c
+    image: nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2
     depends_on:
       db:
         condition: service_healthy
@@ -150,7 +150,7 @@ services:
     # （镜像内置的 www-data crontab）。同一镜像按 compose 子集要求各写一遍，不用锚点。
     # 要等转发先起来：应用的健康检查经转发探身份提供方，而 compose 按文件顺序创建服务——转发排在后面时，
     # 这里等应用 healthy 就把它前面的创建全堵住，互相等死。depends_on 写明，别只靠顺序。
-    image: nextcloud:35.0.2@sha256:d88929dc8386420b8963f86cabb667fdaf733eef9dcf8fc98e226801a32c023c
+    image: nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2
     entrypoint: /cron.sh
     depends_on:
       nextcloud:
@@ -172,7 +172,7 @@ services:
     # 一次性收尾：反代设置、装 user_oidc、登记身份提供方。幂等，每次创建容器（安装、升级、重建）都重跑，
     # 密钥变了（保留数据重装）也会更新。等 nextcloud 健康后再跑，occ 才可用；与 nextcloud 共 netns，
     # 经 oidc-relay 访问核心身份提供方。
-    image: nextcloud:35.0.2@sha256:d88929dc8386420b8963f86cabb667fdaf733eef9dcf8fc98e226801a32c023c
+    image: nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2
     command: ["bash", "/wonton/setup.sh"]
     network_mode: "service:nextcloud"
     depends_on:
